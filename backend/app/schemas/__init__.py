@@ -11,6 +11,7 @@ from app.schemas.domain_record import (
     IntentEnforcementCreate,
     MemberPublicKeys,
 )
+from app.schemas.intent import Intent
 
 __all__ = [
     "DomainDetailResponse",
@@ -20,6 +21,7 @@ __all__ = [
     "DomainRecordUpdate",
     "DomainSummary",
     "IntentEnforcementCreate",
+    "Intent",
     "MemberPublicKeys",
     "LoginRequest",
     "LoginResponse",

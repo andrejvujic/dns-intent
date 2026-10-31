@@ -31,6 +31,7 @@ export default function DomainConfiguration({
   const [members, setMembers] = useState([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
   const [isSubmittingIntent, setIsSubmittingIntent] = useState(false);
+  const [activeView, setActiveView] = useState('records');
   const ieRecord = domain?.records.find((record) => record.type === 'IE');
   const dnsIntentEnabled = Boolean(ieRecord);
   const protectedTypes = useMemo(() => {
@@ -165,29 +166,62 @@ export default function DomainConfiguration({
         </div>
       </section>
 
-      {dnsIntentEnabled && (
-        <DnsIntentProtectedManager
-          ieRecord={ieRecord}
-          userId={userId}
-          domainId={domain.id}
-          domainName={domain.name}
-          records={domain.records.filter((record) => record.type !== 'IE')}
-          onNotify={onNotify}
-          onApplied={onReloadDomain}
-        />
+      <nav className="domain-workspace-nav" aria-label="Domain workspace" role="tablist">
+        <button
+          className={activeView === 'records' ? 'is-active' : ''}
+          type="button"
+          role="tab"
+          aria-selected={activeView === 'records'}
+          aria-controls="dns-records-view"
+          onClick={() => setActiveView('records')}
+        >
+          <span>DNS records</span>
+          <small>View and manage domain data</small>
+        </button>
+        {dnsIntentEnabled && (
+          <button
+            className={activeView === 'commits' ? 'is-active' : ''}
+            type="button"
+            role="tab"
+            aria-selected={activeView === 'commits'}
+            aria-controls="commit-workflow-view"
+            onClick={() => setActiveView('commits')}
+          >
+            <span>Commit workflow</span>
+            <small>Prepare, schedule, and reveal changes</small>
+          </button>
+        )}
+      </nav>
+
+      {activeView === 'records' && (
+        <section id="dns-records-view" role="tabpanel" aria-label="DNS records">
+          <DirectDnsRecordManager
+            records={filteredRecords}
+            query={query}
+            onQueryChange={setQuery}
+            protectedTypes={protectedTypes}
+            isMutating={isMutating}
+            onCreate={handleCreate}
+            onUpdate={handleUpdate}
+            onDelete={handleDelete}
+            onNotify={onNotify}
+          />
+        </section>
       )}
 
-      <DirectDnsRecordManager
-        records={filteredRecords}
-        query={query}
-        onQueryChange={setQuery}
-        protectedTypes={protectedTypes}
-        isMutating={isMutating}
-        onCreate={handleCreate}
-        onUpdate={handleUpdate}
-        onDelete={handleDelete}
-        onNotify={onNotify}
-      />
+      {dnsIntentEnabled && activeView === 'commits' && (
+        <section id="commit-workflow-view" role="tabpanel" aria-label="Commit workflow">
+          <DnsIntentProtectedManager
+            ieRecord={ieRecord}
+            userId={userId}
+            domainId={domain.id}
+            domainName={domain.name}
+            records={domain.records.filter((record) => record.type !== 'IE')}
+            onNotify={onNotify}
+            onApplied={onReloadDomain}
+          />
+        </section>
+      )}
 
       {isEnablingIntent && (
         <IntentEnableForm

@@ -682,6 +682,66 @@ select {
   color: #183f32;
 }
 
+.domain-workspace-nav {
+  display: flex;
+  gap: 8px;
+  margin: -8px 0 28px;
+  padding: 5px;
+  border: 1px solid #dbe4df;
+  border-radius: 14px;
+  background: #eaf0ed;
+}
+
+.domain-workspace-nav button {
+  position: relative;
+  min-width: 220px;
+  display: grid;
+  gap: 3px;
+  padding: 13px 18px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: #63716b;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.domain-workspace-nav button:hover:not(.is-active) {
+  color: #294a3e;
+  background: rgb(255 255 255 / 50%);
+}
+
+.domain-workspace-nav button.is-active {
+  color: #173f32;
+  border-color: #d7e1dc;
+  background: #fff;
+  box-shadow: 0 3px 10px rgb(19 55 43 / 8%);
+}
+
+.domain-workspace-nav button.is-active::after {
+  content: "";
+  position: absolute;
+  right: 18px;
+  bottom: 8px;
+  left: 18px;
+  height: 2px;
+  border-radius: 999px;
+  background: #4d9a73;
+}
+
+.domain-workspace-nav span {
+  padding-bottom: 4px;
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.domain-workspace-nav small {
+  padding-bottom: 5px;
+  color: #84908b;
+  font-size: 0.7rem;
+}
+
 .title-line {
   display: flex;
   align-items: center;
@@ -2044,5 +2104,14 @@ select {
 
   .intent-toggle-copy {
     text-align: left;
+  }
+
+  .domain-workspace-nav {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .domain-workspace-nav button {
+    min-width: 0;
   }
 }

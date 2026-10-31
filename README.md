@@ -9,11 +9,18 @@
 
 Potrebni su Python 3.10 ili noviji.
 
+Priprema virtuelnog okruženja i zavisnosti:
+
 ```bash
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
+
+Pokretanje backenda:
+
+```bash
 uvicorn app.main:app --reload
 ```
 

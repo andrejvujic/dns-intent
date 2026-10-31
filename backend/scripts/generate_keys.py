@@ -26,11 +26,11 @@ def pair() -> dict[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate Ed25519 keys for DNSIntent")
-    parser.add_argument("--recovery-count", type=int, default=3)
+    parser.add_argument("--count", type=int, default=3)
     args = parser.parse_args()
-    if args.recovery_count < 1:
-        parser.error("--recovery-count must be at least 1")
-    print(json.dumps({"intent": pair(), "recovery": [pair() for _ in range(args.recovery_count)]}, indent=2))
+    if args.count < 1:
+        parser.error("--count must be at least 1")
+    print(json.dumps({"intent": [pair() for _ in range(args.count)], "recovery": [pair() for _ in range(args.count)]}, indent=2))
 
 
 if __name__ == "__main__":

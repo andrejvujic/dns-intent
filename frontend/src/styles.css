@@ -1088,6 +1088,35 @@ select {
   text-align: center;
 }
 
+.panic-mode-toggle {
+  display: flex !important;
+  gap: 0.8rem;
+  align-items: flex-start;
+  padding: 0.9rem;
+  border: 1px solid #ef4444;
+  border-radius: 10px;
+  background: #fff7f7;
+}
+.panic-mode-toggle input { width: auto !important; margin-top: 0.2rem; }
+.panic-mode-toggle span { display: grid; gap: 0.2rem; }
+.panic-mode-toggle strong { color: #b91c1c; }
+.panic-mode-toggle small { color: #6b7280; font-weight: 400; }
+.panic-board { margin: 20px 0 34px; }
+.panic-board .commit-help { margin-bottom: 0; }
+.panic-board .commit-item h3 { margin: 14px 0 0; color: #29463b; font-size: 0.92rem; }
+.panic-status { color: #7a4c12; background: #fff0d6; }
+.panic-quorum-grid dd { font-weight: 800; }
+.panic-json-review { margin-top: 14px; border-top: 1px solid #e1e8e4; }
+.panic-json-review summary { padding: 12px 0 0; color: #315f4d; font-size: 0.73rem; font-weight: 800; cursor: pointer; }
+.panic-json-review pre { overflow: auto; max-height: 260px; padding: 12px; border: 1px solid #dfe6e2; border-radius: 8px; color: #29463b; background: #fff; font: 0.7rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+.panic-download-button { color: #315f4d; border: 1px solid #cdd8d2; background: #fff; }
+.panic-vote-form textarea { display: block; }
+.panic-vote-actions button:first-child { color: #7a4038; border-color: #ddc8c4; }
+.panic-user-vote { display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 10px 12px; border-radius: 8px; color: #286347; background: #eaf6ef; font-size: 0.73rem; }
+.panic-user-vote span { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; color: #fff; background: #37865f; font-size: 0.65rem; }
+.panic-user-vote p { margin: 0; }
+.commit-status.status-rejected, .commit-status.status-expired { background: #fee2e2; color: #991b1b; }
+
 @media (max-width: 820px) {
   .commit-workspace {
     grid-template-columns: 1fr;

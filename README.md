@@ -95,6 +95,22 @@ file and the bundle secure: the bundle contains the nonce needed later. During
 reveal, upload the original Intent JSON and paste `reveal_secret.nonce` from the
 bundle.
 
+For a panic change, enable the red **Panic change** checkbox in the same Intent
+builder. Sign the downloaded JSON with the member's panic private key:
+
+```bash
+cd backend
+python -m scripts.create_panic_signature /path/to/panic.json \
+  --private-key 'BASE64_PANIC_PRIVATE_KEY' \
+  --output panic-signature.json
+```
+
+The requester uploads both files. Other members review and download the exact
+JSON from **Pending Panic Changes**, sign it, validate their signature, and vote
+ACCEPT or REJECT. Either counter reaching the configured panic quorum closes the
+request; accepted changes execute immediately. Panic changes can also cancel an
+active scheduled commit.
+
 ## Running the frontend
 
 Requires Node.js 20.19+ or 22.12+.

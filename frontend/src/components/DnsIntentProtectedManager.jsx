@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { getScheduledCommits, revealCommit, scheduleCommit } from '../api/domains.js';
+import { createPanicChange, getScheduledCommits, revealCommit, scheduleCommit } from '../api/domains.js';
 import IntentGenerator from './IntentGenerator.jsx';
 
 function policyValue(value, fallback = 'Not configured') {
@@ -26,6 +26,8 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
   const [intentFilename, setIntentFilename] = useState('');
   const [nonce, setNonce] = useState('');
   const [isApplying, setIsApplying] = useState(false);
+  const [panicMode, setPanicMode] = useState(false);
+  const [panicChange, setPanicChange] = useState(null);
   const operations = Array.isArray(policy.protected_operations)
     ? policy.protected_operations.join(', ')
     : policyValue(policy.protected_operations);
@@ -49,13 +51,16 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
     event.preventDefault();
     setIsSubmitting(true);
     try {
-      await scheduleCommit(userId, domainId, {
-        hash: hash.trim(),
-        signature: signature.trim(),
-      });
+      if (panicMode) {
+        if (!panicChange) throw new Error('Select the Panic Change JSON file.');
+        await createPanicChange(userId, domainId, { change: panicChange, ...(hash.trim() ? { hash: hash.trim() } : {}), signature: signature.trim() });
+      } else {
+        await scheduleCommit(userId, domainId, { hash: hash.trim(), signature: signature.trim() });
+      }
       setHash('');
       setSignature('');
-      onNotify('success', 'The commit was scheduled and its hold period has started.');
+      setPanicChange(null);
+      onNotify('success', panicMode ? 'The panic change was submitted for quorum voting.' : 'The commit was scheduled and its hold period has started.');
       await loadCommits();
     } catch (error) {
       onNotify('error', error.message);
@@ -69,7 +74,7 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
     if (!file) return;
     try {
       const bundle = JSON.parse(await file.text());
-      const commit = bundle.commit_request || bundle;
+      const commit = bundle.panic_request || bundle.commit_request || bundle;
       if (typeof commit.hash !== 'string' || typeof commit.signature !== 'string') {
         throw new Error('missing fields');
       }
@@ -79,6 +84,20 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
     } catch {
       event.target.value = '';
       onNotify('error', 'The signing bundle must contain commit_request.hash and commit_request.signature.');
+    }
+  }
+
+  async function loadPanicChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      if (parsed.type !== 'PANIC_CHANGE') throw new Error('wrong type');
+      setPanicChange(parsed);
+    } catch {
+      event.target.value = '';
+      setPanicChange(null);
+      onNotify('error', 'Select a valid PANIC_CHANGE JSON file.');
     }
   }
 
@@ -163,19 +182,23 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
         domainName={domainName}
         records={records}
         protectedTypes={Array.isArray(policy.protected_operations) ? policy.protected_operations : []}
+        commits={commits}
+        panicMode={panicMode}
+        onPanicModeChange={(enabled) => { setPanicMode(enabled); setHash(''); setSignature(''); setPanicChange(null); }}
         onNotify={onNotify}
       />
 
       <section className="commit-workspace">
         <form className="commit-form" onSubmit={handleSubmit}>
           <div>
-            <p className="policy-kicker">2. Commit</p>
-            <h2>Schedule a signed change</h2>
+            <p className="policy-kicker">2. {panicMode ? 'Panic request' : 'Commit'}</p>
+            <h2>{panicMode ? 'Submit a signed panic change' : 'Schedule a signed change'}</h2>
             <p className="commit-help">
-              Upload the signing bundle or enter its Base64 SHA-256 hash and Ed25519
-              signature. The nonce stays local until the reveal phase.
+              Upload the signing bundle or enter its Base64 SHA-256 hash and Ed25519 signature.
+              {panicMode ? ' The signature must use your panic key.' : ' The nonce stays local until the reveal phase.'}
             </p>
           </div>
+          {panicMode && <><label htmlFor="panic-json">Panic Change JSON</label><input id="panic-json" type="file" accept="application/json,.json" onChange={loadPanicChange} required /></>}
           <label htmlFor="signing-bundle">Signing bundle JSON</label>
           <input
             id="signing-bundle"
@@ -184,7 +207,7 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
             onChange={loadSigningBundle}
           />
           <p className="field-note">Upload the script output, or enter the two values manually below.</p>
-          <label htmlFor="commit-hash">Commit hash</label>
+          <label htmlFor="commit-hash">{panicMode ? 'Panic hash (optional)' : 'Commit hash'}</label>
           <input
             id="commit-hash"
             value={hash}
@@ -192,8 +215,9 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
             placeholder="44-character Base64 value"
             minLength={44}
             maxLength={44}
-            required
+            required={!panicMode}
           />
+          {panicMode && <p className="field-note">The backend calculates this hash from the uploaded canonical JSON; include it only for an extra consistency check.</p>}
           <label htmlFor="commit-signature">Signature</label>
           <textarea
             id="commit-signature"
@@ -206,7 +230,7 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
             required
           />
           <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? 'Scheduling…' : 'Schedule commit'}
+            {isSubmitting ? 'Submitting…' : panicMode ? 'Submit panic change' : 'Schedule commit'}
           </button>
         </form>
 

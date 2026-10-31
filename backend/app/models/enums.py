@@ -15,3 +15,8 @@ class PanicRequestStatus(StrEnum):
     APPLIED = "APPLIED"
     REJECTED = "REJECTED"
     EXPIRED = "EXPIRED"
+
+
+class PanicVoteDecision(StrEnum):
+    ACCEPT = "ACCEPT"
+    REJECT = "REJECT"

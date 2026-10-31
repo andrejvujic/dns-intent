@@ -83,6 +83,28 @@ export function revealCommit(userId, domainId, commitId, payload) {
   });
 }
 
+export function createPanicChange(userId, domainId, payload) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/panic-changes`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export function getPanicChanges(userId, domainId) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/panic-changes`);
+}
+
+export function attachPanicSignature(userId, domainId, panicId, signature) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/panic-changes/${panicId}/signatures`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signature }),
+  });
+}
+
+export function votePanicChange(userId, domainId, panicId, decision, signature) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/panic-changes/${panicId}/vote`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, signature }),
+  });
+}
+
 export function createDomainRecord(userId, domainId, payload) {
   return requestJson(`/api/users/${userId}/domains/${domainId}/records`, {
     method: 'POST',

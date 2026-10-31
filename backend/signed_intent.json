@@ -1,0 +1,10 @@
+{
+  "format": "dns-intent-panic-signature-v1",
+  "domain": "dnsintent.test",
+  "request_id": "752a8d0d-2cbb-411a-b21c-5396c1017cb1",
+  "panic_request": {
+    "hash": "USIqsXGcFN6ZoNuK9qFtsj1jLuVz9uIYhf7GfEwvavs=",
+    "signature": "1f4Yxe2yr7Jwdh1NdgG1AC4P4DQXiPTmLK0o0mjg4E5E70WkT6Yux9JnGAjZ+ExqjU63KSEIwyPX5YQaRQtZAQ=="
+  },
+  "signature": "1f4Yxe2yr7Jwdh1NdgG1AC4P4DQXiPTmLK0o0mjg4E5E70WkT6Yux9JnGAjZ+ExqjU63KSEIwyPX5YQaRQtZAQ=="
+}

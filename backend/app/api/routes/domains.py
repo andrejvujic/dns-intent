@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -16,6 +18,10 @@ from app.models import (
     DomainRecordType,
     User,
     UserDomain,
+    PanicRequest,
+    PanicRequestStatus,
+    PanicSignature,
+    PanicVoteDecision,
 )
 from app.schemas import (
     CommitApplyResponse,
@@ -30,15 +36,20 @@ from app.schemas import (
     DomainSummary,
     Intent,
     IntentEnforcementCreate,
+    PanicCreate,
+    PanicResponse,
+    PanicSignatureCreate,
+    PanicVoteCreate,
 )
 from app.schemas.domain_record import validate_record_value
-from app.services.canonical import commitment_hash
+from app.services.canonical import canonical_json, commitment_hash
 from app.services.crypto import (
     CryptoInputError,
     decode_b64,
     validate_public_key,
     verify_signature,
 )
+from app.services.notifications import notify_users
 
 
 router = APIRouter(prefix="/api/users/{user_id}/domains", tags=["domains"])
@@ -117,6 +128,29 @@ def commit_response(commit: Commit, user: User) -> CommitResponse:
         consumed_at=commit.consumed_at,
         user_id=user.id,
         username=user.username,
+    )
+
+
+def panic_response(request: PanicRequest, user_id: int) -> PanicResponse:
+    votes = {vote.user_domain.user_id: vote for vote in request.signatures}
+    current_vote = votes.get(user_id)
+    return PanicResponse(
+        id=request.id,
+        request_id=request.request_id,
+        domain_id=request.domain_id,
+        created_by_user_id=request.created_by_user_id,
+        created_by_username=request.created_by.username,
+        change=request.change_json,
+        hash=request.hash,
+        required_quorum=request.required_quorum,
+        for_count=sum(vote.decision == PanicVoteDecision.ACCEPT for vote in request.signatures),
+        against_count=sum(vote.decision == PanicVoteDecision.REJECT for vote in request.signatures),
+        user_has_signed=current_vote is not None and current_vote.is_valid,
+        user_vote=current_vote.decision.value if current_vote and current_vote.decision else None,
+        status=request.status.value,
+        expires_at=request.expires_at,
+        applied_at=request.applied_at,
+        created_at=request.created_at,
     )
 
 
@@ -437,6 +471,16 @@ def schedule_commit(
     session.commit()
     session.refresh(commit)
     user = session.get(User, user_id)
+    recipients = session.scalars(
+        select(User.email)
+        .join(UserDomain)
+        .where(UserDomain.domain_id == domain.id, UserDomain.is_active.is_(True), User.id != user_id)
+    ).all()
+    notify_users(
+        list(recipients),
+        f"New scheduled DNS commit for {domain.name}",
+        f"{user.username} scheduled commit {commit.id}. It matures at {matures_at.isoformat()}.",
+    )
     return commit_response(commit, user)
 
 
@@ -471,6 +515,223 @@ def list_scheduled_commits(
     return [commit_response(commit, user) for commit, user in rows]
 
 
+def load_panic_request(
+    request_id: int, domain_id: int, session: Session
+) -> PanicRequest:
+    request = session.scalar(
+        select(PanicRequest)
+        .where(PanicRequest.id == request_id, PanicRequest.domain_id == domain_id)
+        .options(
+            selectinload(PanicRequest.created_by),
+            selectinload(PanicRequest.signatures)
+            .selectinload(PanicSignature.user_domain),
+        )
+    )
+    if request is None:
+        raise HTTPException(status_code=404, detail="Panic change was not found.")
+    now = datetime.now(timezone.utc)
+    expires_at = request.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if request.status == PanicRequestStatus.PENDING and now > expires_at:
+        request.status = PanicRequestStatus.EXPIRED
+        session.commit()
+    return request
+
+
+@router.post(
+    "/{domain_id}/panic-changes",
+    response_model=PanicResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_panic_change(
+    user_id: int, domain_id: int, payload: PanicCreate, session: DbSession
+) -> PanicResponse:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    membership = get_active_membership(user_id, domain_id, session)
+    ie_record = find_ie_record(domain.id, session)
+    if ie_record is None or membership.panic_public_key is None:
+        raise HTTPException(status_code=409, detail="DNS Intent is not enabled for this domain.")
+    if payload.change.domain != domain.name.lower().rstrip("."):
+        raise HTTPException(status_code=400, detail="Panic change domain does not match this domain.")
+    expires_at = payload.change.expires_at.astimezone(timezone.utc)
+    if expires_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=410, detail="Panic change has already expired.")
+
+    change_data = payload.change.model_dump(mode="json", exclude_none=True)
+    digest = hashlib.sha256(canonical_json(change_data)).digest()
+    calculated_hash = base64.b64encode(digest).decode("ascii")
+    try:
+        supplied_hash = decode_b64(payload.hash, field="hash", expected_length=32) if payload.hash else None
+        decode_b64(payload.signature, field="signature", expected_length=64)
+    except CryptoInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if supplied_hash is not None and not hmac.compare_digest(digest, supplied_hash):
+        raise HTTPException(status_code=403, detail="The supplied hash does not match the panic JSON.")
+    if not verify_signature(membership.panic_public_key, payload.signature, digest):
+        raise HTTPException(status_code=403, detail="Signature is not valid for the user's panic key.")
+    if session.scalar(select(PanicRequest.id).where(PanicRequest.request_id == payload.change.request_id)):
+        raise HTTPException(status_code=409, detail="This panic request_id has already been used.")
+    if session.scalar(select(PanicRequest.id).where(PanicRequest.hash == calculated_hash)):
+        raise HTTPException(status_code=409, detail="This panic change has already been submitted.")
+
+    quorum = int((ie_record.value or {}).get("panic_quorum", 1))
+    request = PanicRequest(
+        request_id=payload.change.request_id,
+        domain_id=domain.id,
+        created_by_user_id=user_id,
+        operation=payload.change.operation,
+        value=change_data,
+        change_json=change_data,
+        hash=calculated_hash,
+        creator_signature=payload.signature,
+        required_quorum=quorum,
+        expires_at=expires_at,
+        status=PanicRequestStatus.PENDING,
+    )
+    session.add(request)
+    session.flush()
+    session.add(
+        PanicSignature(
+            panic_request_id=request.id,
+            user_domain_id=membership.id,
+            signature=payload.signature,
+            is_valid=True,
+            decision=PanicVoteDecision.ACCEPT,
+        )
+    )
+    if quorum == 1:
+        request.status = PanicRequestStatus.QUORUM_REACHED
+        apply_panic_change(domain, change_data, session)
+        request.status = PanicRequestStatus.APPLIED
+        request.applied_at = datetime.now(timezone.utc)
+    session.commit()
+    creator = session.get(User, user_id)
+    recipients = session.scalars(
+        select(User.email)
+        .join(UserDomain)
+        .where(UserDomain.domain_id == domain.id, UserDomain.is_active.is_(True), User.id != user_id)
+    ).all()
+    if request.status == PanicRequestStatus.APPLIED:
+        notify_users(
+            list(recipients),
+            f"Panic DNS change applied for {domain.name}",
+            f"{creator.username} submitted panic change {request.request_id} ({request.operation}). The author vote satisfied quorum and the change was applied.",
+        )
+    else:
+        notify_users(
+            list(recipients),
+            f"Panic DNS change requires your vote for {domain.name}",
+            f"{creator.username} submitted panic change {request.request_id} ({request.operation}). Open Pending Panic Changes to review and vote.",
+        )
+    return panic_response(load_panic_request(request.id, domain.id, session), user_id)
+
+
+@router.get("/{domain_id}/panic-changes", response_model=list[PanicResponse])
+def list_panic_changes(
+    user_id: int, domain_id: int, session: DbSession
+) -> list[PanicResponse]:
+    get_authorized_domain(user_id, domain_id, session)
+    ids = session.scalars(
+        select(PanicRequest.id)
+        .where(PanicRequest.domain_id == domain_id)
+        .order_by(PanicRequest.created_at.desc())
+    ).all()
+    return [panic_response(load_panic_request(item, domain_id, session), user_id) for item in ids]
+
+
+@router.post(
+    "/{domain_id}/panic-changes/{panic_id}/signatures",
+    response_model=PanicResponse,
+)
+def attach_panic_signature(
+    user_id: int,
+    domain_id: int,
+    panic_id: int,
+    payload: PanicSignatureCreate,
+    session: DbSession,
+) -> PanicResponse:
+    get_authorized_domain(user_id, domain_id, session)
+    membership = get_active_membership(user_id, domain_id, session)
+    request = load_panic_request(panic_id, domain_id, session)
+    if request.status != PanicRequestStatus.PENDING:
+        raise HTTPException(status_code=409, detail="This panic change is no longer pending.")
+    if membership.panic_public_key is None:
+        raise HTTPException(status_code=409, detail="The user has no panic public key.")
+    digest = decode_b64(request.hash, field="stored hash", expected_length=32)
+    if not verify_signature(membership.panic_public_key, payload.signature, digest):
+        raise HTTPException(status_code=403, detail="Signature is not valid for the user's panic key.")
+    existing = session.scalar(
+        select(PanicSignature).where(
+            PanicSignature.panic_request_id == request.id,
+            PanicSignature.user_domain_id == membership.id,
+        )
+    )
+    if existing:
+        if existing.signature != payload.signature:
+            raise HTTPException(status_code=409, detail="A different signature is already attached.")
+    else:
+        session.add(PanicSignature(
+            panic_request_id=request.id,
+            user_domain_id=membership.id,
+            signature=payload.signature,
+            is_valid=True,
+        ))
+        session.commit()
+    return panic_response(load_panic_request(request.id, domain_id, session), user_id)
+
+
+@router.post(
+    "/{domain_id}/panic-changes/{panic_id}/vote",
+    response_model=PanicResponse,
+)
+def vote_on_panic_change(
+    user_id: int,
+    domain_id: int,
+    panic_id: int,
+    payload: PanicVoteCreate,
+    session: DbSession,
+) -> PanicResponse:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    membership = get_active_membership(user_id, domain_id, session)
+    request = load_panic_request(panic_id, domain_id, session)
+    if request.status != PanicRequestStatus.PENDING:
+        raise HTTPException(status_code=409, detail="This panic change is no longer pending.")
+    vote = session.scalar(
+        select(PanicSignature).where(
+            PanicSignature.panic_request_id == request.id,
+            PanicSignature.user_domain_id == membership.id,
+        )
+    )
+    if vote is None or not vote.is_valid or vote.signature != payload.signature:
+        raise HTTPException(status_code=403, detail="Attach this valid panic signature before voting.")
+    if membership.panic_public_key is None or not verify_signature(
+        membership.panic_public_key,
+        payload.signature,
+        decode_b64(request.hash, field="stored hash", expected_length=32),
+    ):
+        raise HTTPException(status_code=403, detail="The panic signature is no longer valid.")
+    if vote.decision is not None:
+        raise HTTPException(status_code=409, detail="This user has already voted.")
+
+    vote.decision = PanicVoteDecision(payload.decision)
+    session.flush()
+    votes = session.scalars(
+        select(PanicSignature).where(PanicSignature.panic_request_id == request.id)
+    ).all()
+    for_count = sum(item.decision == PanicVoteDecision.ACCEPT for item in votes)
+    against_count = sum(item.decision == PanicVoteDecision.REJECT for item in votes)
+    if for_count >= request.required_quorum:
+        request.status = PanicRequestStatus.QUORUM_REACHED
+        apply_panic_change(domain, request.change_json, session)
+        request.status = PanicRequestStatus.APPLIED
+        request.applied_at = datetime.now(timezone.utc)
+    elif against_count >= request.required_quorum:
+        request.status = PanicRequestStatus.REJECTED
+    session.commit()
+    return panic_response(load_panic_request(request.id, domain_id, session), user_id)
+
+
 @router.post(
     "/{domain_id}/commits/{commit_id}/reveal",
     response_model=CommitApplyResponse,
@@ -500,6 +761,11 @@ def reveal_and_apply_commit(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This commit has already been applied.",
+        )
+    if commit.status in (CommitStatus.REJECTED, CommitStatus.EXPIRED):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This commit was cancelled or expired and cannot be revealed.",
         )
 
     now = datetime.now(timezone.utc)
@@ -618,6 +884,64 @@ def apply_intent(domain: Domain, intent: Intent, session: Session) -> int | None
         record.value = value
         return record.id
 
+    session.delete(record)
+    return None
+
+
+def apply_panic_change(domain: Domain, change: dict, session: Session) -> int | None:
+    operation = change["operation"]
+    if operation == "CANCEL_COMMIT":
+        commit = session.scalar(
+            select(Commit)
+            .join(UserDomain, Commit.user_domain_id == UserDomain.id)
+            .where(
+                Commit.id == change["commit_id"],
+                UserDomain.domain_id == domain.id,
+            )
+        )
+        if commit is None:
+            raise HTTPException(status_code=404, detail="Scheduled commit was not found.")
+        if commit.status not in (CommitStatus.HOLDING, CommitStatus.READY):
+            raise HTTPException(status_code=409, detail="Only an active scheduled commit can be cancelled.")
+        commit.status = CommitStatus.REJECTED
+        return None
+
+    if operation == "ADD_RECORD":
+        record_type_name = change["record_type"]
+        if record_type_name not in get_protected_operations(domain.id, session):
+            raise HTTPException(status_code=409, detail="This record type is not protected.")
+        record_type = session.scalar(
+            select(DomainRecordType).where(DomainRecordType.name == record_type_name)
+        )
+        if record_type is None:
+            raise HTTPException(status_code=422, detail=f"Unsupported DNS record type: {record_type_name}")
+        value = validated_value(record_type.name, change["value"])
+        ensure_record_is_unique(session, domain.id, record_type.id, value)
+        record = DomainRecord(domain=domain, record_type=record_type, value=value)
+        session.add(record)
+        session.flush()
+        return record.id
+
+    record = session.scalar(
+        select(DomainRecord)
+        .where(DomainRecord.id == change["record_id"], DomainRecord.domain_id == domain.id)
+        .options(selectinload(DomainRecord.record_type))
+    )
+    if record is None or record.record_type.name == "IE":
+        raise HTTPException(status_code=404, detail="DNS record from the panic change was not found.")
+    if record.record_type.name not in get_protected_operations(domain.id, session):
+        raise HTTPException(status_code=409, detail="This record type is not protected.")
+    if operation == "UPDATE_RECORD":
+        value = validated_value(record.record_type.name, change["value"])
+        ensure_record_is_unique(
+            session,
+            domain.id,
+            record.domain_record_type_id,
+            value,
+            exclude_record_id=record.id,
+        )
+        record.value = value
+        return record.id
     session.delete(record)
     return None
 

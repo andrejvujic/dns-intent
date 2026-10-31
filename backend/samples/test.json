@@ -1,0 +1,8 @@
+{
+  "type": "PANIC_CHANGE",
+  "request_id": "752a8d0d-2cbb-411a-b21c-5396c1017cb1",
+  "domain": "dnsintent.test",
+  "operation": "CANCEL_COMMIT",
+  "commit_id": 1,
+  "expires_at": "2026-11-01T20:01:27.319000Z"
+}

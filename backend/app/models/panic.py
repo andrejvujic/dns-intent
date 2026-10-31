@@ -16,7 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.models.enums import PanicRequestStatus
+from app.models.enums import PanicRequestStatus, PanicVoteDecision
 
 if TYPE_CHECKING:
     from app.models.domain import Domain, UserDomain
@@ -42,6 +42,9 @@ class PanicRequest(Base):
         ForeignKey("users.id", ondelete="RESTRICT"), index=True
     )
     operation: Mapped[str] = mapped_column(String(50))
+    change_json: Mapped[Any] = mapped_column(JSON, nullable=False)
+    hash: Mapped[str] = mapped_column(String(44), unique=True, index=True)
+    creator_signature: Mapped[str] = mapped_column(String(88))
     value: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     required_quorum: Mapped[int] = mapped_column(nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -92,6 +95,16 @@ class PanicSignature(Base):
     )
     signature: Mapped[str] = mapped_column(String(88))
     is_valid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    decision: Mapped[PanicVoteDecision | None] = mapped_column(
+        Enum(
+            PanicVoteDecision,
+            name="panic_vote_decision",
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+        ),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

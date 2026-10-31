@@ -1,0 +1,78 @@
+{
+  "format": "dns-intent-private-keys-v1",
+  "domain": "dnsintent.test",
+  "generated_at": "2026-10-31T19:57:59.306Z",
+  "warning": "PRIVATE KEY MATERIAL — store securely and never upload this file.",
+  "users": [
+    {
+      "user_id": 1,
+      "username": "ana.jovanovic",
+      "email": "ana.jovanovic@dnsintent.test",
+      "name": "Ana Jovanović",
+      "intent": {
+        "public_key": "SuTn+MeFxMTaCytJGPtfdCi2+FJ2FS25vUgbNo5gtgU=",
+        "private_key": "MC4CAQAwBQYDK2VwBCIEIEU7recq0pB3HG6vkKXLfI2Cf8/NQ/A6D0+RMbT1lfLq"
+      },
+      "panic": {
+        "public_key": "hxaKKGNBURK62LNeKslWsSSwZvDA0iXpu3mrR3TqYZM=",
+        "private_key": "MC4CAQAwBQYDK2VwBCIEIF7V/2kJiDF62WneL58c61U40p5loxZ+VpMK0MUDw4f1"
+      }
+    },
+    {
+      "user_id": 3,
+      "username": "jelena.nikolic",
+      "email": "jelena.nikolic@dnsintent.test",
+      "name": "Jelena Nikolić",
+      "intent": {
+        "public_key": "zxO2itOkCv7HfPnfRmpTDtEVSXz8To6Oppo3IXS0Qwg=",
+        "private_key": "MC4CAQAwBQYDK2VwBCIEIFggQHScIu6FuHAMxNf61h0HEt2ZXeHAVMiEetWYQhxm"
+      },
+      "panic": {
+        "public_key": "beQdgukehKYBQWGo6GKYWf5HIn05/RdpQmuct9ZWdNc=",
+        "private_key": "MC4CAQAwBQYDK2VwBCIEIAHh3nU9hNWuOH/fV4ecpvW7aNJ7Tlpo3iEDiT+o4TTE"
+      }
+    },
+    {
+      "user_id": 2,
+      "username": "marko.petrovic",
+      "email": "marko.petrovic@dnsintent.test",
+      "name": "Marko Petrović",
+      "intent": {
+        "public_key": "iEZrq7r65b0gF/PBG3sEu0olfHLVlP09whueNIUNtug=",
+        "private_key": "MC4CAQAwBQYDK2VwBCIEIF3mdBOi/ihR2f/M6iTIL7TMbXvTvZ5/I721uQpFaN5K"
+      },
+      "panic": {
+        "public_key": "rap8/Q9Cv596sPUOT52k4NZAO0U9/Uv9Fd3fa/iQJwQ=",
+        "private_key": "MC4CAQAwBQYDK2VwBCIEIP2c4NmCb2KXWJNNlcRPol8Ewzx4mEz8dcnRs4eo52LD"
+      }
+    },
+    {
+      "user_id": 5,
+      "username": "milica.ilic",
+      "email": "milica.ilic@dnsintent.test",
+      "name": "Milica Ilić",
+      "intent": {
+        "public_key": "J1qLYvXg3ywzsGwKj6brq+wYDicpOKdTymsfOJQOpUk=",
+        "private_key": "MC4CAQAwBQYDK2VwBCIEIGmji/K/CXRGOeiM/nxE4OCJI2Zuthx+3UByqFMmgwUG"
+      },
+      "panic": {
+        "public_key": "0nw14kvMgh4/POLMsQvjrMyCJFqSPrLzS2WCthPy7m0=",
+        "private_key": "MC4CAQAwBQYDK2VwBCIEIDPmxP3lOv/lb8T7otqSnwEejoNMFPUeREr8zZMOsHod"
+      }
+    },
+    {
+      "user_id": 4,
+      "username": "nikola.stojanovic",
+      "email": "nikola.stojanovic@dnsintent.test",
+      "name": "Nikola Stojanović",
+      "intent": {
+        "public_key": "T0oKBOAY8ePsfye1MytfJ9Zy6SS3KiQXKSIiDuVhnRs=",
+        "private_key": "MC4CAQAwBQYDK2VwBCIEILKM/dIrNi5YIoebf2EKeGQQd1/kA2ZHNxkPKMK9DaLy"
+      },
+      "panic": {
+        "public_key": "op7BNVIP+1y5kaZ5LIn8CoZz8/H7pmSWCp7NFWyXmMM=",
+        "private_key": "MC4CAQAwBQYDK2VwBCIEIMGD0fejRlpJL8lRqkA2UjdPd/26MR3CR9dIwVohNn2g"
+      }
+    }
+  ]
+}

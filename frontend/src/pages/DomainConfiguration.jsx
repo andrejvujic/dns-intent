@@ -10,6 +10,7 @@ import {
 import DirectDnsRecordManager from '../components/DirectDnsRecordManager.jsx';
 import DnsIntentProtectedManager from '../components/DnsIntentProtectedManager.jsx';
 import IntentEnableForm from '../components/IntentEnableForm.jsx';
+import PendingPanicChanges from '../components/PendingPanicChanges.jsx';
 import { recordContent, recordName } from '../components/DnsRecordTable.jsx';
 import {
   downloadPrivateKeys,
@@ -167,6 +168,16 @@ export default function DomainConfiguration({
       </section>
 
       <nav className="domain-workspace-nav" aria-label="Domain workspace" role="tablist">
+        {dnsIntentEnabled && (
+          <button
+            className={activeView === 'panic' ? 'is-active' : ''}
+            type="button" role="tab" aria-selected={activeView === 'panic'}
+            aria-controls="panic-workflow-view" onClick={() => setActiveView('panic')}
+          >
+            <span>Pending Panic Changes</span>
+            <small>Review, sign, accept, or reject</small>
+          </button>
+        )}
         <button
           className={activeView === 'records' ? 'is-active' : ''}
           type="button"
@@ -206,6 +217,12 @@ export default function DomainConfiguration({
             onDelete={handleDelete}
             onNotify={onNotify}
           />
+        </section>
+      )}
+
+      {dnsIntentEnabled && activeView === 'panic' && (
+        <section id="panic-workflow-view" role="tabpanel" aria-label="Pending Panic Changes">
+          <PendingPanicChanges userId={userId} domainId={domain.id} onNotify={onNotify} onApplied={onReloadDomain} />
         </section>
       )}
 

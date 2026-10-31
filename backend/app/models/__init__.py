@@ -5,7 +5,7 @@ from app.models.domain_record import (
     DomainRecord,
     DomainRecordType,
 )
-from app.models.enums import CommitStatus, PanicRequestStatus
+from app.models.enums import CommitStatus, PanicRequestStatus, PanicVoteDecision
 from app.models.panic import PanicRequest, PanicSignature
 from app.models.user import User
 
@@ -19,6 +19,7 @@ __all__ = [
     "PanicRequest",
     "PanicRequestStatus",
     "PanicSignature",
+    "PanicVoteDecision",
     "User",
     "UserDomain",
 ]

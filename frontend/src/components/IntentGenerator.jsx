@@ -21,13 +21,14 @@ function downloadJson(filename, value) {
   URL.revokeObjectURL(url);
 }
 
-export default function IntentGenerator({ domainName, records, protectedTypes, onNotify }) {
+export default function IntentGenerator({ domainName, records, protectedTypes, commits = [], panicMode = false, onPanicModeChange, onNotify }) {
   const now = new Date();
   const [operation, setOperation] = useState('ADD_RECORD');
   const [recordId, setRecordId] = useState('');
   const [notBefore, setNotBefore] = useState(() => localDateTime(new Date(now.getTime() - 60_000)));
   const [validUntil, setValidUntil] = useState(() => localDateTime(new Date(now.getTime() + 86_400_000)));
   const [showRecordForm, setShowRecordForm] = useState(false);
+  const [commitId, setCommitId] = useState('');
 
   const protectedRecords = useMemo(
     () => records.filter((record) => protectedTypes.includes(record.type)),
@@ -57,7 +58,23 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
     if (!times) return false;
 
     let intent;
-    if (operation === 'ADD_RECORD') {
+    if (panicMode && operation === 'CANCEL_COMMIT') {
+      if (!commitId) {
+        onNotify('error', 'Select a scheduled commit.');
+        return false;
+      }
+      intent = {
+        type: 'PANIC_CHANGE', request_id: crypto.randomUUID(), domain: domainName,
+        operation, commit_id: Number(commitId), expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      };
+    } else if (panicMode) {
+      const base = {
+        type: 'PANIC_CHANGE', request_id: crypto.randomUUID(), domain: domainName,
+        operation, expires_at: new Date(validUntil).toISOString(),
+      };
+      if (operation === 'ADD_RECORD') intent = { ...base, record_type: recordPayload.type, value: recordPayload.value };
+      else intent = { ...base, record_id: selectedRecord.id, ...(operation === 'UPDATE_RECORD' ? { value: recordPayload.value } : {}) };
+    } else if (operation === 'ADD_RECORD') {
       intent = {
         domain: domainName,
         operation,
@@ -80,14 +97,19 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
     }
 
     const safeDomain = domainName.replace(/[^a-z0-9.-]/gi, '_');
-    downloadJson(`${safeDomain}-${operation.toLowerCase()}-intent.json`, intent);
-    onNotify('success', 'The Intent JSON was generated and downloaded. Sign it locally.');
+    downloadJson(`${safeDomain}-${operation.toLowerCase()}-${panicMode ? 'panic' : 'intent'}.json`, intent);
+    onNotify('success', `${panicMode ? 'Panic change' : 'Intent'} JSON was generated and downloaded. Sign it locally with your ${panicMode ? 'panic' : 'Intent'} key.`);
     return true;
   }
 
   function handleGenerate(event) {
     event.preventDefault();
-    if (!timeFields()) return;
+    if (!panicMode && !timeFields()) return;
+    if (panicMode && operation !== 'CANCEL_COMMIT' && !timeFields()) return;
+    if (panicMode && operation === 'CANCEL_COMMIT') {
+      saveIntent();
+      return;
+    }
     if (operation !== 'ADD_RECORD' && !selectedRecord) {
       onNotify('error', 'Select a DNS record.');
       return;
@@ -111,6 +133,14 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
         <p className="commit-help">Choose an operation and validity window. Local times are converted to UTC ISO timestamps in the downloaded file.</p>
       </div>
       <form onSubmit={handleGenerate}>
+        {onPanicModeChange && (
+          <label className="panic-mode-toggle">
+            <input type="checkbox" checked={panicMode} onChange={(event) => {
+              onPanicModeChange(event.target.checked); setOperation('ADD_RECORD'); setRecordId(''); setCommitId('');
+            }} />
+            <span><strong>Panic change</strong><small>Uses panic-key voting and executes immediately after quorum.</small></span>
+          </label>
+        )}
         <label>
           <span>Operation</span>
           <select value={operation} onChange={(event) => {
@@ -120,9 +150,18 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
             <option value="ADD_RECORD">Add record</option>
             <option value="UPDATE_RECORD">Update record</option>
             <option value="DELETE_RECORD">Delete record</option>
+            {panicMode && <option value="CANCEL_COMMIT">Cancel scheduled commit</option>}
           </select>
         </label>
-        {operation !== 'ADD_RECORD' && (
+        {operation === 'CANCEL_COMMIT' && (
+          <label><span>Scheduled commit</span><select value={commitId} onChange={(event) => setCommitId(event.target.value)} required>
+            <option value="">Select a commit</option>
+            {commits.filter((item) => ['HOLDING', 'READY'].includes(item.status)).map((item) => (
+              <option value={item.id} key={item.id}>#{item.id} · {item.username} · {item.status}</option>
+            ))}
+          </select></label>
+        )}
+        {operation !== 'ADD_RECORD' && operation !== 'CANCEL_COMMIT' && (
           <label>
             <span>Protected DNS record</span>
             <select value={recordId} onChange={(event) => setRecordId(event.target.value)} required>
@@ -135,7 +174,7 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
             </select>
           </label>
         )}
-        <div className="intent-time-grid">
+        {operation !== 'CANCEL_COMMIT' && <div className="intent-time-grid">
           <label>
             <span>Not before</span>
             <input type="datetime-local" value={notBefore} onChange={(event) => setNotBefore(event.target.value)} required />
@@ -144,9 +183,9 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
             <span>Valid until</span>
             <input type="datetime-local" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} required />
           </label>
-        </div>
+        </div>}
         <button className="primary-button" type="submit">
-          {operation === 'DELETE_RECORD' ? 'Download Intent JSON' : 'Continue to record details'}
+          {['DELETE_RECORD', 'CANCEL_COMMIT'].includes(operation) ? `Download ${panicMode ? 'Panic' : 'Intent'} JSON` : 'Continue to record details'}
         </button>
       </form>
 

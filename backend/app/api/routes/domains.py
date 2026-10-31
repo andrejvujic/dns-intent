@@ -58,7 +58,7 @@ def get_authorized_domain(user_id: int, domain_id: int, session: Session) -> Dom
     if domain is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Domen nije pronađen ili korisnik nema pristup domenu.",
+            detail="Domain not found or the user has no access to it.",
         )
     return domain
 
@@ -77,8 +77,8 @@ def ensure_dns_intent_disabled(domain_id: int, session: Session) -> None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "DNS Intent je uključen za ovaj domen. Koristite zaštićeni "
-                "commit/reveal ili panic tok."
+                "DNS Intent is enabled for this domain. Use the protected "
+                "commit/reveal or panic flow."
             ),
         )
 
@@ -117,7 +117,7 @@ def ensure_record_is_unique(
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Identičan DNS record već postoji.",
+            detail="An identical DNS record already exists.",
         )
 
 
@@ -154,7 +154,7 @@ def get_user_domain(
     if domain is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Domen nije pronađen.",
+            detail="Domain not found.",
         )
 
     summary = to_summary(domain)
@@ -186,7 +186,7 @@ def create_domain_record(
     if payload.type == "IE":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="IE se ne može kreirati kroz obični DNS record endpoint.",
+            detail="IE records cannot be created through the regular DNS record endpoint.",
         )
 
     record_type = session.scalar(
@@ -195,7 +195,7 @@ def create_domain_record(
     if record_type is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Nepodržan DNS record tip: {payload.type}",
+            detail=f"Unsupported DNS record type: {payload.type}",
         )
 
     value = validated_value(record_type.name, payload.value)
@@ -228,7 +228,7 @@ def enable_dns_intent(
     if record_type is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="IE record type nije konfigurisan u sistemu.",
+            detail="The IE record type is not configured in the system.",
         )
 
     value = {
@@ -268,7 +268,7 @@ def update_domain_record(
     if record is None or record.record_type.name == "IE":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="DNS record nije pronađen.",
+            detail="DNS record not found.",
         )
 
     value = validated_value(record.record_type.name, payload.value)
@@ -310,7 +310,7 @@ def delete_domain_record(
     if record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="DNS record nije pronađen.",
+            detail="DNS record not found.",
         )
 
     session.delete(record)

@@ -15,8 +15,8 @@ export default function DnsIntentProtectedManager({ ieRecord, records, query, on
       <section className="intent-notice" role="status">
         <span className="intent-notice-icon" aria-hidden="true">✓</span>
         <div>
-          <strong>DNS Intent je uključen za ovaj domen.</strong>
-          <p>Promene DNS zapisa moraju koristiti commit/reveal ili panic tok.</p>
+          <strong>DNS Intent is enabled for this domain.</strong>
+          <p>DNS record changes must use the commit/reveal or panic flow.</p>
         </div>
       </section>
 

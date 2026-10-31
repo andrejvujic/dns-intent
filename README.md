@@ -4,16 +4,16 @@
 
 Requires Git, Python 3.10+ and Node.js 20.19+ or 22.12+.
 
-Windows: double-click `demo.cmd` in this folder, or run from PowerShell:
+Windows: double-click `scripts\demo.cmd`, or run from PowerShell in this folder:
 
 ```powershell
-.\demo.cmd
+.\scripts\demo.cmd
 ```
 
 Linux/macOS or Git Bash:
 
 ```bash
-bash demo.sh
+bash scripts/demo.sh
 ```
 
 - Installs dependencies.
@@ -22,9 +22,9 @@ bash demo.sh
 - App: `http://localhost:5173`. Login details are printed in the terminal.
 - `Ctrl+C` stops the app.
 
-For day-to-day team work, use `start.cmd` / `start.sh`: runs `git pull` on
-`main` and starts the app without deleting the database. Shared steps for
-both scripts live in `scripts/common.sh`.
+For day-to-day team work, use `scripts\start.cmd` / `scripts/start.sh`: runs
+`git pull` on `main` and starts the app without deleting the database. Shared
+steps for both scripts live in `scripts/common.sh`.
 
 ## Tech stack
 
@@ -100,5 +100,11 @@ Frontend: `http://localhost:5173`
 │   ├── index.html
 │   ├── package.json
 │   └── vite.config.js
+├── scripts/
+│   ├── common.sh
+│   ├── demo.cmd
+│   ├── demo.sh
+│   ├── start.cmd
+│   └── start.sh
 └── README.md
 ```

@@ -14,10 +14,10 @@ from app.models import (
 """
 cd backend
 
-# Kreiranje tabela i seed
+# Create tables and seed
 python -m scripts.seed_database
 
-# Brisanje svih tabela
+# Drop all tables
 python -m scripts.drop_database
 
 # Drop + create + seed
@@ -87,7 +87,7 @@ def seed_database(session: Session) -> None:
 
     domain = Domain(
         name="dnsintent.test",
-        description="Razvojni domen za demonstraciju upravljanja DNS zapisima",
+        description="Development domain for demonstrating DNS record management",
         registrar="Development Registrar",
     )
 

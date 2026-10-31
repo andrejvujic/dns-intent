@@ -10,7 +10,7 @@ export async function loginUser(email, password) {
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
-    throw new Error(data?.detail || 'Prijava trenutno nije dostupna.');
+    throw new Error(data?.detail || 'Login is currently unavailable.');
   }
 
   return data;

@@ -26,10 +26,10 @@ def login(credentials: LoginRequest, session: DbSession) -> LoginResponse:
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Pogrešan email ili lozinka.",
+            detail="Invalid email or password.",
         )
 
     return LoginResponse(
-        message="Uspješna prijava.",
+        message="Login successful.",
         user=UserResponse.model_validate(user),
     )

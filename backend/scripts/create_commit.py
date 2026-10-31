@@ -46,20 +46,23 @@ def read_intent(path: str) -> Intent:
     return Intent.model_validate_json(source)
 
 
-def create_bundle(intent: Intent, private_key: Ed25519PrivateKey) -> dict[str, Any]:
+def create_bundle(
+    intent: Intent, private_key: Ed25519PrivateKey, *, intent_file: str
+) -> dict[str, Any]:
     intent_data = intent.model_dump(mode="json", exclude_none=True)
     nonce = secrets.token_bytes(32)
     digest = commitment_hash(intent_data, nonce)
     signature = private_key.sign(digest)
 
     return {
+        "format": "dns-intent-signing-bundle-v2",
         "domain": intent.domain,
+        "intent_file": intent_file,
         "commit_request": {
             "hash": base64.b64encode(digest).decode("ascii"),
             "signature": base64.b64encode(signature).decode("ascii"),
         },
-        "reveal_request": {
-            "intent": intent_data,
+        "reveal_secret": {
             "nonce": base64.b64encode(nonce).decode("ascii"),
         },
     }
@@ -78,16 +81,27 @@ def main() -> None:
             "legacy raw 32-byte key."
         ),
     )
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="Write the signing bundle to this JSON file instead of stdout",
+    )
     args = parser.parse_args()
 
     try:
         intent = read_intent(args.intent)
         private_key = load_private_key(args.private_key)
-        bundle = create_bundle(intent, private_key)
+        intent_file = "stdin" if args.intent == "-" else Path(args.intent).name
+        bundle = create_bundle(intent, private_key, intent_file=intent_file)
     except (OSError, ValueError, ValidationError) as exc:
         parser.error(str(exc))
 
-    print(json.dumps(bundle, indent=2, ensure_ascii=False))
+    output = f"{json.dumps(bundle, indent=2, ensure_ascii=False)}\n"
+    if args.output:
+        Path(args.output).write_text(output, encoding="utf-8")
+        print(f"Signing bundle written to {args.output}")
+    else:
+        print(output, end="")
 
 
 if __name__ == "__main__":

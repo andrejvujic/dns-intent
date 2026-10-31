@@ -1,0 +1,12 @@
+{
+  "domain": "dnsintent.test",
+  "operation": "ADD_RECORD",
+  "record_type": "A",
+  "value": {
+    "name": "Dule",
+    "ttl": 172,
+    "address": "192.168.17.2"
+  },
+  "not_before": "2026-10-31T18:30:00.000Z",
+  "valid_until": "2026-11-01T18:31:00.000Z"
+}

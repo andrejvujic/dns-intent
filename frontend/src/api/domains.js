@@ -105,6 +105,12 @@ export function votePanicChange(userId, domainId, panicId, decision, signature) 
   });
 }
 
+export function finalizeKeyRotation(userId, domainId, panicId, publicKeys) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/panic-changes/${panicId}/rotation-keys`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ public_keys: publicKeys }),
+  });
+}
+
 export function createDomainRecord(userId, domainId, payload) {
   return requestJson(`/api/users/${userId}/domains/${domainId}/records`, {
     method: 'POST',

@@ -1753,6 +1753,17 @@ select {
   box-shadow: 0 4px 18px rgb(21 48 39 / 4%);
 }
 
+.domain-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.rotate-keys-button {
+  min-height: 52px;
+  white-space: nowrap;
+}
+
 .policy-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2159,6 +2170,16 @@ select {
 
   .intent-toggle-copy {
     text-align: left;
+  }
+
+  .domain-heading-actions {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .domain-heading-actions .intent-toggle {
+    justify-content: space-between;
   }
 
   .domain-workspace-nav {

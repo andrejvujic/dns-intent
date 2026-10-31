@@ -18,6 +18,18 @@ import {
   publicKeysPayload,
 } from '../crypto/keys.js';
 
+function downloadPanicChange(domainName, operation, change) {
+  const blob = new Blob([`${JSON.stringify(change, null, 2)}\n`], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${domainName.replace(/[^a-z0-9.-]/gi, '_')}-${operation.toLowerCase()}-panic.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function DomainConfiguration({
   userId,
   domain,
@@ -33,7 +45,7 @@ export default function DomainConfiguration({
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
   const [isSubmittingIntent, setIsSubmittingIntent] = useState(false);
   const [activeView, setActiveView] = useState('records');
-  const [shutdownChange, setShutdownChange] = useState(null);
+  const [preparedPanicChange, setPreparedPanicChange] = useState(null);
   const ieRecord = domain?.records.find((record) => record.type === 'IE');
   const dnsIntentEnabled = Boolean(ieRecord);
   const protectedTypes = useMemo(() => {
@@ -147,17 +159,25 @@ export default function DomainConfiguration({
       operation: 'DISABLE_DNS_INTENT',
       expires_at: new Date(Date.now() + 86_400_000).toISOString(),
     };
-    const blob = new Blob([`${JSON.stringify(change, null, 2)}\n`], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${domain.name.replace(/[^a-z0-9.-]/gi, '_')}-disable-dns-intent-panic.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadPanicChange(domain.name, change.operation, change);
 
-    setShutdownChange(change);
+    setPreparedPanicChange(change);
     setActiveView('commits');
     onNotify('success', 'The DNS Intent shutdown panic JSON was downloaded. Sign it with your panic key, then submit it below.');
+  }
+
+  function handleRotateKeys() {
+    const change = {
+      type: 'PANIC_CHANGE',
+      request_id: crypto.randomUUID(),
+      domain: domain.name,
+      operation: 'ROTATE_KEYS',
+      expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+    };
+    downloadPanicChange(domain.name, change.operation, change);
+    setPreparedPanicChange(change);
+    setActiveView('commits');
+    onNotify('success', 'The key-rotation panic JSON was downloaded. New keys will be generated only after the quorum approves it.');
   }
 
   if (isLoading || !domain) {
@@ -170,21 +190,28 @@ export default function DomainConfiguration({
 
       <section className="page-heading domain-heading">
         <h1>{domain.name}</h1>
-        <div className="intent-toggle">
-          <div className="intent-toggle-copy">
-            <strong>DNS Intent</strong>
-            <span>{dnsIntentEnabled ? 'Protected' : 'Standard'}</span>
+        <div className="domain-heading-actions">
+          {dnsIntentEnabled && (
+            <button className="button-secondary rotate-keys-button" type="button" onClick={handleRotateKeys}>
+              Rotate keys
+            </button>
+          )}
+          <div className="intent-toggle">
+            <div className="intent-toggle-copy">
+              <strong>DNS Intent</strong>
+              <span>{dnsIntentEnabled ? 'Protected' : 'Standard'}</span>
+            </div>
+            <button
+              className={`switch${dnsIntentEnabled ? ' is-on' : ''}`}
+              type="button"
+              role="switch"
+              aria-checked={dnsIntentEnabled}
+              aria-label={dnsIntentEnabled ? 'Start DNS Intent shutdown' : 'Enable DNS Intent protection'}
+              onClick={dnsIntentEnabled ? handleDisableIntent : openIntentForm}
+            >
+              <span className="switch-knob" />
+            </button>
           </div>
-          <button
-            className={`switch${dnsIntentEnabled ? ' is-on' : ''}`}
-            type="button"
-            role="switch"
-            aria-checked={dnsIntentEnabled}
-            aria-label={dnsIntentEnabled ? 'Start DNS Intent shutdown' : 'Enable DNS Intent protection'}
-            onClick={dnsIntentEnabled ? handleDisableIntent : openIntentForm}
-          >
-            <span className="switch-knob" />
-          </button>
         </div>
       </section>
 
@@ -243,7 +270,7 @@ export default function DomainConfiguration({
 
       {dnsIntentEnabled && activeView === 'panic' && (
         <section id="panic-workflow-view" role="tabpanel" aria-label="Pending Panic Changes">
-          <PendingPanicChanges userId={userId} domainId={domain.id} onNotify={onNotify} onApplied={onReloadDomain} />
+          <PendingPanicChanges userId={userId} domainId={domain.id} domainName={domain.name} onNotify={onNotify} onApplied={onReloadDomain} />
         </section>
       )}
 
@@ -257,8 +284,11 @@ export default function DomainConfiguration({
             records={domain.records.filter((record) => record.type !== 'IE')}
             onNotify={onNotify}
             onApplied={onReloadDomain}
-            onPanicSubmitted={() => setActiveView('panic')}
-            initialPanicChange={shutdownChange}
+            onPanicSubmitted={() => {
+              setPreparedPanicChange(null);
+              setActiveView('panic');
+            }}
+            initialPanicChange={preparedPanicChange}
           />
         </section>
       )}

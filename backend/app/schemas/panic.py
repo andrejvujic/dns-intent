@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.schemas.domain_record import validate_record_value
+from app.schemas.domain_record import MemberPublicKeys, validate_record_value
 
 
 PANIC_OPERATIONS = {
@@ -12,6 +12,7 @@ PANIC_OPERATIONS = {
     "DELETE_RECORD",
     "CANCEL_COMMIT",
     "DISABLE_DNS_INTENT",
+    "ROTATE_KEYS",
 }
 
 
@@ -54,6 +55,10 @@ class PanicChange(BaseModel):
             if any((self.record_type, self.record_id, self.commit_id, self.value)):
                 raise ValueError("DISABLE_DNS_INTENT does not accept record or commit fields")
             return self
+        if self.operation == "ROTATE_KEYS":
+            if any((self.record_type, self.record_id, self.commit_id, self.value)):
+                raise ValueError("ROTATE_KEYS does not accept record or commit fields")
+            return self
         if self.operation == "CANCEL_COMMIT":
             if self.commit_id is None:
                 raise ValueError("CANCEL_COMMIT requires commit_id")
@@ -91,6 +96,11 @@ class PanicSignatureCreate(BaseModel):
 
 class PanicVoteCreate(PanicSignatureCreate):
     decision: Literal["ACCEPT", "REJECT"]
+
+
+class RotationKeysCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    public_keys: list[MemberPublicKeys] = Field(min_length=1)
 
 
 class PanicResponse(BaseModel):

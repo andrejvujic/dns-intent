@@ -1,7 +1,7 @@
 {
   "type": "PANIC_CHANGE",
-  "request_id": "dc315814-9f78-4610-a827-d91523cf1a7d",
+  "request_id": "6b2480ad-d304-452c-93c7-8fa0f0ec2082",
   "domain": "dnsintent.test",
-  "operation": "DISABLE_DNS_INTENT",
-  "expires_at": "2026-11-01T21:07:08.490000Z"
+  "operation": "ROTATE_KEYS",
+  "expires_at": "2026-11-01T21:37:53.030000Z"
 }

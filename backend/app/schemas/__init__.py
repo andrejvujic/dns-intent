@@ -24,6 +24,7 @@ from app.schemas.panic import (
     PanicResponse,
     PanicSignatureCreate,
     PanicVoteCreate,
+    RotationKeysCreate,
 )
 
 __all__ = [
@@ -48,4 +49,5 @@ __all__ = [
     "PanicResponse",
     "PanicSignatureCreate",
     "PanicVoteCreate",
+    "RotationKeysCreate",
 ]

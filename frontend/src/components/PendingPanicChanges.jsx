@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { attachPanicSignature, getPanicChanges, votePanicChange } from '../api/domains.js';
+import { attachPanicSignature, finalizeKeyRotation, getDomainMembers, getPanicChanges, votePanicChange } from '../api/domains.js';
+import { downloadPrivateKeys, generateDomainKeys, publicKeysPayload } from '../crypto/keys.js';
 
 function downloadJson(change) {
   const blob = new Blob([`${JSON.stringify(change, null, 2)}\n`], { type: 'application/json' });
@@ -14,12 +15,13 @@ function downloadJson(change) {
 
 function changeSummary(change) {
   if (change.operation === 'DISABLE_DNS_INTENT') return 'Disable DNS Intent and clear scheduled changes';
+  if (change.operation === 'ROTATE_KEYS') return 'Rotate Intent and panic keys and clear scheduled changes';
   if (change.operation === 'CANCEL_COMMIT') return `Cancel scheduled commit #${change.commit_id}`;
   if (change.operation === 'ADD_RECORD') return `Add ${change.record_type} record`;
   return `${change.operation === 'UPDATE_RECORD' ? 'Update' : 'Delete'} DNS record #${change.record_id}`;
 }
 
-export default function PendingPanicChanges({ userId, domainId, onNotify, onApplied }) {
+export default function PendingPanicChanges({ userId, domainId, domainName, onNotify, onApplied }) {
   const [items, setItems] = useState([]);
   const [signatures, setSignatures] = useState({});
   const [loading, setLoading] = useState(true);
@@ -72,6 +74,23 @@ export default function PendingPanicChanges({ userId, domainId, onNotify, onAppl
     finally { setBusyId(null); }
   }
 
+  async function generateRotationKeys(item) {
+    setBusyId(item.id);
+    try {
+      const members = await getDomainMembers(userId, domainId);
+      const keyFile = await generateDomainKeys({ name: domainName }, members);
+      downloadPrivateKeys(keyFile, 'rotated-private-keys');
+      await finalizeKeyRotation(userId, domainId, item.id, publicKeysPayload(keyFile));
+      onNotify('success', 'New private keys were downloaded and the public keys were rotated. Store the JSON securely.');
+      await load();
+      await onApplied();
+    } catch (error) {
+      onNotify('error', error.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   if (loading) return <div className="loading-state">Loading panic changes…</div>;
   return (
     <section className="scheduled-commits panic-board">
@@ -97,9 +116,26 @@ export default function PendingPanicChanges({ userId, domainId, onNotify, onAppl
             </dl>
             {isTied && <div className="panic-tie-notice"><strong>Voting is tied.</strong><span>The next vote is the tie-breaker.</span></div>}
             {item.status === 'APPLIED' && <div className="panic-decision-notice decision-accepted"><strong>Decision reached: ACCEPT</strong><span>The acceptance quorum was met and the change was applied.</span></div>}
+            {item.status === 'QUORUM_REACHED' && item.change.operation === 'ROTATE_KEYS' && (
+              <div className="panic-decision-notice decision-accepted">
+                <strong>Rotation approved</strong>
+                <span>
+                  {item.created_by_user_id === userId
+                    ? 'The quorum was met. You initiated this action; generate and apply the new keys.'
+                    : `Waiting for ${item.created_by_username}, who initiated this action, to generate and apply the new keys.`}
+                </span>
+              </div>
+            )}
             {item.status === 'REJECTED' && <div className="panic-decision-notice decision-rejected"><strong>Decision reached: REJECT</strong><span>The rejection quorum was met. No change was applied.</span></div>}
             <details className="panic-json-review"><summary>Review requested JSON</summary><pre>{JSON.stringify(item.change, null, 2)}</pre></details>
-            <button className="commit-reveal-button panic-download-button" type="button" onClick={() => downloadJson(item.change)}>Download JSON to sign</button>
+            {item.status === 'PENDING' && (
+              <button className="commit-reveal-button panic-download-button" type="button" onClick={() => downloadJson(item.change)}>Download JSON to sign</button>
+            )}
+            {item.status === 'QUORUM_REACHED' && item.change.operation === 'ROTATE_KEYS' && item.created_by_user_id === userId && (
+              <button className="primary-button" type="button" disabled={busyId === item.id} onClick={() => generateRotationKeys(item)}>
+                {busyId === item.id ? 'Generating keys…' : 'Generate file and rotate keys'}
+              </button>
+            )}
             {item.status === 'PENDING' && !item.user_vote && <div className="reveal-form panic-vote-form">
               <p className="reveal-step-label">Signature and vote</p>
               <label htmlFor={`panic-signature-${item.id}`}>Panic signature</label>

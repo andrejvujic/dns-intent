@@ -40,6 +40,7 @@ from app.schemas import (
     PanicResponse,
     PanicSignatureCreate,
     PanicVoteCreate,
+    RotationKeysCreate,
 )
 from app.schemas.domain_record import validate_record_value
 from app.services.canonical import canonical_json, commitment_hash
@@ -266,6 +267,67 @@ def ensure_record_is_unique(
             status_code=status.HTTP_409_CONFLICT,
             detail="An identical DNS record already exists.",
         )
+
+
+def validated_rotation_keys(
+    domain_id: int,
+    public_keys: list,
+    session: Session,
+) -> dict[int, tuple[str, str]]:
+    memberships = session.scalars(
+        select(UserDomain).join(User).where(
+            UserDomain.domain_id == domain_id,
+            UserDomain.is_active.is_(True),
+            User.is_active.is_(True),
+        )
+    ).all()
+    expected_ids = {membership.user_id for membership in memberships}
+    normalized: dict[int, tuple[str, str]] = {}
+    for item in public_keys:
+        if isinstance(item, dict):
+            user_id = item.get("user_id")
+            intent_public_key = item.get("intent_public_key")
+            panic_public_key = item.get("panic_public_key")
+        else:
+            user_id = item.user_id
+            intent_public_key = item.intent_public_key
+            panic_public_key = item.panic_public_key
+        if user_id in normalized:
+            raise HTTPException(status_code=422, detail="Rotation contains duplicate users.")
+        try:
+            validate_public_key(intent_public_key, field=f"user {user_id} intent_public_key")
+            validate_public_key(panic_public_key, field=f"user {user_id} panic_public_key")
+        except CryptoInputError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        normalized[user_id] = (intent_public_key, panic_public_key)
+
+    if set(normalized) != expected_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="New public keys are required for every active domain member.",
+        )
+    return normalized
+
+
+def delete_domain_change_requests(
+    domain_id: int,
+    session: Session,
+    *,
+    preserve_panic_request_id: int | None,
+) -> None:
+    scheduled_commits = session.scalars(
+        select(Commit)
+        .join(UserDomain, Commit.user_domain_id == UserDomain.id)
+        .where(UserDomain.domain_id == domain_id)
+    ).all()
+    for commit in scheduled_commits:
+        session.delete(commit)
+
+    panic_query = select(PanicRequest).where(PanicRequest.domain_id == domain_id)
+    if preserve_panic_request_id is not None:
+        panic_query = panic_query.where(PanicRequest.id != preserve_panic_request_id)
+    for panic_request in session.scalars(panic_query).all():
+        session.delete(panic_request)
 
 
 @router.get("", response_model=list[DomainSummary])
@@ -621,7 +683,6 @@ def create_panic_change(
     expires_at = payload.change.expires_at.astimezone(timezone.utc)
     if expires_at <= datetime.now(timezone.utc):
         raise HTTPException(status_code=410, detail="Panic change has already expired.")
-
     change_data = payload.change.model_dump(mode="json", exclude_none=True)
     digest = hashlib.sha256(canonical_json(change_data)).digest()
     calculated_hash = base64.b64encode(digest).decode("ascii")
@@ -679,6 +740,26 @@ def create_panic_change(
                 detail="DNS Intent already has a pending shutdown vote.",
             )
 
+    if payload.change.operation == "ROTATE_KEYS":
+        rotation_requests = session.scalars(
+            select(PanicRequest).where(
+                PanicRequest.domain_id == domain.id,
+                PanicRequest.operation == "ROTATE_KEYS",
+                PanicRequest.status == PanicRequestStatus.PENDING,
+            )
+        ).all()
+        now = datetime.now(timezone.utc)
+        for rotation_request in rotation_requests:
+            rotation_expires_at = rotation_request.expires_at
+            if rotation_expires_at.tzinfo is None:
+                rotation_expires_at = rotation_expires_at.replace(tzinfo=timezone.utc)
+            if rotation_expires_at > now:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This domain already has a pending key rotation vote.",
+                )
+            rotation_request.status = PanicRequestStatus.EXPIRED
+
     quorum = int((ie_record.value or {}).get("panic_quorum", 1))
     request = PanicRequest(
         request_id=payload.change.request_id,
@@ -706,14 +787,15 @@ def create_panic_change(
     )
     if quorum == 1:
         request.status = PanicRequestStatus.QUORUM_REACHED
-        apply_panic_change(
-            domain,
-            change_data,
-            session,
-            preserve_panic_request_id=request.id,
-        )
-        request.status = PanicRequestStatus.APPLIED
-        request.applied_at = datetime.now(timezone.utc)
+        if request.operation != "ROTATE_KEYS":
+            apply_panic_change(
+                domain,
+                change_data,
+                session,
+                preserve_panic_request_id=request.id,
+            )
+            request.status = PanicRequestStatus.APPLIED
+            request.applied_at = datetime.now(timezone.utc)
     session.commit()
     creator = session.get(User, user_id)
     recipients = session.scalars(
@@ -841,16 +923,56 @@ def vote_on_panic_change(
     against_count = sum(item.decision == PanicVoteDecision.REJECT for item in votes)
     if for_count >= request.required_quorum:
         request.status = PanicRequestStatus.QUORUM_REACHED
-        apply_panic_change(
-            domain,
-            request.change_json,
-            session,
-            preserve_panic_request_id=request.id,
-        )
-        request.status = PanicRequestStatus.APPLIED
-        request.applied_at = datetime.now(timezone.utc)
+        if request.operation != "ROTATE_KEYS":
+            apply_panic_change(
+                domain,
+                request.change_json,
+                session,
+                preserve_panic_request_id=request.id,
+            )
+            request.status = PanicRequestStatus.APPLIED
+            request.applied_at = datetime.now(timezone.utc)
     elif against_count >= request.required_quorum:
         request.status = PanicRequestStatus.REJECTED
+    session.commit()
+    return panic_response(load_panic_request(request.id, domain_id, session), user_id)
+
+
+@router.post(
+    "/{domain_id}/panic-changes/{panic_id}/rotation-keys",
+    response_model=PanicResponse,
+)
+def finalize_key_rotation(
+    user_id: int,
+    domain_id: int,
+    panic_id: int,
+    payload: RotationKeysCreate,
+    session: DbSession,
+) -> PanicResponse:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    request = load_panic_request(panic_id, domain_id, session)
+    if request.operation != "ROTATE_KEYS":
+        raise HTTPException(status_code=409, detail="This panic request is not a key rotation.")
+    if request.status != PanicRequestStatus.QUORUM_REACHED:
+        raise HTTPException(
+            status_code=409,
+            detail="New keys can be generated only after the rotation quorum is reached.",
+        )
+    if request.created_by_user_id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the user who initiated this rotation can generate and apply the new keys.",
+        )
+
+    keys_by_user = validated_rotation_keys(domain.id, payload.public_keys, session)
+    apply_key_rotation(
+        domain,
+        keys_by_user,
+        session,
+        preserve_panic_request_id=request.id,
+    )
+    request.status = PanicRequestStatus.APPLIED
+    request.applied_at = datetime.now(timezone.utc)
     session.commit()
     return panic_response(load_panic_request(request.id, domain_id, session), user_id)
 
@@ -1033,20 +1155,11 @@ def apply_panic_change(
         if ie_record is None:
             raise HTTPException(status_code=409, detail="DNS Intent is not enabled for this domain.")
 
-        scheduled_commits = session.scalars(
-            select(Commit)
-            .join(UserDomain, Commit.user_domain_id == UserDomain.id)
-            .where(UserDomain.domain_id == domain.id)
-        ).all()
-        for commit in scheduled_commits:
-            session.delete(commit)
-
-        panic_query = select(PanicRequest).where(PanicRequest.domain_id == domain.id)
-        if preserve_panic_request_id is not None:
-            panic_query = panic_query.where(PanicRequest.id != preserve_panic_request_id)
-        for panic_request in session.scalars(panic_query).all():
-            session.delete(panic_request)
-
+        delete_domain_change_requests(
+            domain.id,
+            session,
+            preserve_panic_request_id=preserve_panic_request_id,
+        )
         session.delete(ie_record)
 
         memberships = session.scalars(
@@ -1056,6 +1169,12 @@ def apply_panic_change(
             membership.intent_public_key = None
             membership.panic_public_key = None
         return None
+
+    if operation == "ROTATE_KEYS":
+        raise HTTPException(
+            status_code=409,
+            detail="Key rotation must be finalized with new keys after quorum approval.",
+        )
 
     if operation == "CANCEL_COMMIT":
         commit = session.scalar(
@@ -1111,6 +1230,30 @@ def apply_panic_change(
         return record.id
     session.delete(record)
     return None
+
+
+def apply_key_rotation(
+    domain: Domain,
+    keys_by_user: dict[int, tuple[str, str]],
+    session: Session,
+    *,
+    preserve_panic_request_id: int,
+) -> None:
+    delete_domain_change_requests(
+        domain.id,
+        session,
+        preserve_panic_request_id=preserve_panic_request_id,
+    )
+    memberships = session.scalars(
+        select(UserDomain).where(UserDomain.domain_id == domain.id)
+    ).all()
+    for membership in memberships:
+        keys = keys_by_user.get(membership.user_id)
+        if membership.is_active and keys is not None:
+            membership.intent_public_key, membership.panic_public_key = keys
+        else:
+            membership.intent_public_key = None
+            membership.panic_public_key = None
 
 
 @router.patch(

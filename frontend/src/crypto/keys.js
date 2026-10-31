@@ -46,12 +46,12 @@ export function publicKeysPayload(keyFile) {
   }));
 }
 
-export function downloadPrivateKeys(keyFile) {
+export function downloadPrivateKeys(keyFile, filenameSuffix = 'private-keys') {
   const blob = new Blob([`${JSON.stringify(keyFile, null, 2)}\n`], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${keyFile.domain.replace(/[^a-z0-9.-]/gi, '_')}-private-keys.json`;
+  link.download = `${keyFile.domain.replace(/[^a-z0-9.-]/gi, '_')}-${filenameSuffix}.json`;
   document.body.appendChild(link);
   link.click();
   link.remove();

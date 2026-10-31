@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.models.domain_record import DEFAULT_DOMAIN_RECORD_TYPES
+
 
 MAX_TTL = 2_147_483_647
 DNS_TYPE_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*$")
@@ -306,6 +308,26 @@ class DomainRecordUpdate(BaseModel):
     value: dict[str, Any]
 
 
+class IntentEnforcementCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    panic_quorum: int = Field(ge=1)
+    intent_delay_seconds: int = Field(ge=0)
+    protected_record_types: list[str] = Field(min_length=1)
+
+    @field_validator("protected_record_types")
+    @classmethod
+    def validate_protected_record_types(cls, values: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(value.strip().upper() for value in values))
+        supported = set(DEFAULT_DOMAIN_RECORD_TYPES) - {"IE"}
+        if any(value not in supported for value in normalized):
+            raise ValueError(
+                "protected_record_types must contain only supported DNS record types "
+                "(IE cannot be protected)"
+            )
+        return normalized
+
+
 def validate_record_value(record_type: str, value: dict[str, Any]) -> dict[str, Any]:
     model = RECORD_VALUE_MODELS.get(record_type)
     if model is None:
@@ -316,6 +338,7 @@ def validate_record_value(record_type: str, value: dict[str, Any]) -> dict[str, 
 __all__ = [
     "DomainRecordCreate",
     "DomainRecordUpdate",
+    "IntentEnforcementCreate",
     "RECORD_VALUE_MODELS",
     "validate_record_value",
 ]

@@ -13,6 +13,7 @@ from app.schemas import (
     DomainRecordResponse,
     DomainRecordUpdate,
     DomainSummary,
+    IntentEnforcementCreate,
 )
 from app.schemas.domain_record import validate_record_value
 
@@ -199,6 +200,44 @@ def create_domain_record(
 
     value = validated_value(record_type.name, payload.value)
     ensure_record_is_unique(session, domain.id, record_type.id, value)
+
+    record = DomainRecord(domain=domain, record_type=record_type, value=value)
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return to_record_response(record)
+
+
+@router.post(
+    "/{domain_id}/intent",
+    response_model=DomainRecordResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def enable_dns_intent(
+    user_id: int,
+    domain_id: int,
+    payload: IntentEnforcementCreate,
+    session: DbSession,
+) -> DomainRecordResponse:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    ensure_dns_intent_disabled(domain.id, session)
+
+    record_type = session.scalar(
+        select(DomainRecordType).where(DomainRecordType.name == "IE")
+    )
+    if record_type is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="IE record type nije konfigurisan u sistemu.",
+        )
+
+    value = {
+        "name": "@",
+        "ttl": 3600,
+        "panic_quorum": payload.panic_quorum,
+        "intent_delay_seconds": payload.intent_delay_seconds,
+        "protected_record_types": payload.protected_record_types,
+    }
 
     record = DomainRecord(domain=domain, record_type=record_type, value=value)
     session.add(record)

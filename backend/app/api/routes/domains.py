@@ -706,7 +706,12 @@ def create_panic_change(
     )
     if quorum == 1:
         request.status = PanicRequestStatus.QUORUM_REACHED
-        apply_panic_change(domain, change_data, session)
+        apply_panic_change(
+            domain,
+            change_data,
+            session,
+            preserve_panic_request_id=request.id,
+        )
         request.status = PanicRequestStatus.APPLIED
         request.applied_at = datetime.now(timezone.utc)
     session.commit()
@@ -836,7 +841,12 @@ def vote_on_panic_change(
     against_count = sum(item.decision == PanicVoteDecision.REJECT for item in votes)
     if for_count >= request.required_quorum:
         request.status = PanicRequestStatus.QUORUM_REACHED
-        apply_panic_change(domain, request.change_json, session)
+        apply_panic_change(
+            domain,
+            request.change_json,
+            session,
+            preserve_panic_request_id=request.id,
+        )
         request.status = PanicRequestStatus.APPLIED
         request.applied_at = datetime.now(timezone.utc)
     elif against_count >= request.required_quorum:
@@ -1010,24 +1020,33 @@ def apply_intent(domain: Domain, intent: Intent, session: Session) -> int | None
     return None
 
 
-def apply_panic_change(domain: Domain, change: dict, session: Session) -> int | None:
+def apply_panic_change(
+    domain: Domain,
+    change: dict,
+    session: Session,
+    *,
+    preserve_panic_request_id: int | None = None,
+) -> int | None:
     operation = change["operation"]
     if operation == "DISABLE_DNS_INTENT":
         ie_record = find_ie_record(domain.id, session)
         if ie_record is None:
             raise HTTPException(status_code=409, detail="DNS Intent is not enabled for this domain.")
 
-        protected_types = get_protected_operations(domain.id, session)
-        protected_records = session.scalars(
-            select(DomainRecord)
-            .join(DomainRecordType)
-            .where(
-                DomainRecord.domain_id == domain.id,
-                DomainRecordType.name.in_(protected_types),
-            )
+        scheduled_commits = session.scalars(
+            select(Commit)
+            .join(UserDomain, Commit.user_domain_id == UserDomain.id)
+            .where(UserDomain.domain_id == domain.id)
         ).all()
-        for record in protected_records:
-            session.delete(record)
+        for commit in scheduled_commits:
+            session.delete(commit)
+
+        panic_query = select(PanicRequest).where(PanicRequest.domain_id == domain.id)
+        if preserve_panic_request_id is not None:
+            panic_query = panic_query.where(PanicRequest.id != preserve_panic_request_id)
+        for panic_request in session.scalars(panic_query).all():
+            session.delete(panic_request)
+
         session.delete(ie_record)
 
         memberships = session.scalars(

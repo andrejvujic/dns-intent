@@ -7,7 +7,17 @@ from sqlalchemy.orm import Session
 
 from app.api.routes.domains import apply_panic_change
 from app.db.base import Base
-from app.models import Domain, DomainRecord, DomainRecordType, User, UserDomain
+from app.models import (
+    Commit,
+    CommitStatus,
+    Domain,
+    DomainRecord,
+    DomainRecordType,
+    PanicRequest,
+    PanicRequestStatus,
+    User,
+    UserDomain,
+)
 from app.schemas.panic import PanicChange
 
 
@@ -41,7 +51,7 @@ class ApplyPanicShutdownTests(TestCase):
     def tearDown(self) -> None:
         self.engine.dispose()
 
-    def test_deletes_protected_records_and_ie_policy_but_keeps_unprotected_records(self) -> None:
+    def test_keeps_dns_records_but_deletes_policy_commits_and_old_panic_requests(self) -> None:
         with Session(self.engine) as session:
             types = {
                 name: DomainRecordType(name=name) for name in ("A", "MX", "NS", "IE")
@@ -72,12 +82,48 @@ class ApplyPanicShutdownTests(TestCase):
                 ]
             )
             session.add_all([*types.values(), domain, user, membership])
+            session.flush()
+            now = datetime.now(timezone.utc)
+            scheduled_commit = Commit(
+                user_domain=membership,
+                hash="c" * 44,
+                signature="s" * 88,
+                status=CommitStatus.HOLDING,
+                received_at=now,
+                matures_at=now + timedelta(hours=1),
+            )
+            old_panic_request = PanicRequest(
+                request_id="old-panic-request",
+                domain=domain,
+                created_by=user,
+                operation="DELETE_RECORD",
+                change_json={"operation": "DELETE_RECORD", "record_id": 1},
+                hash="p" * 44,
+                creator_signature="s" * 88,
+                required_quorum=2,
+                expires_at=now + timedelta(hours=1),
+                status=PanicRequestStatus.PENDING,
+            )
+            shutdown_request = PanicRequest(
+                request_id="shutdown-request",
+                domain=domain,
+                created_by=user,
+                operation="DISABLE_DNS_INTENT",
+                change_json={"operation": "DISABLE_DNS_INTENT"},
+                hash="d" * 44,
+                creator_signature="s" * 88,
+                required_quorum=2,
+                expires_at=now + timedelta(hours=1),
+                status=PanicRequestStatus.QUORUM_REACHED,
+            )
+            session.add_all([scheduled_commit, old_panic_request, shutdown_request])
             session.commit()
 
             apply_panic_change(
                 domain,
                 {"operation": "DISABLE_DNS_INTENT"},
                 session,
+                preserve_panic_request_id=shutdown_request.id,
             )
             session.commit()
 
@@ -88,7 +134,9 @@ class ApplyPanicShutdownTests(TestCase):
             ).all()
             session.refresh(membership)
 
-            self.assertEqual(remaining_types, ["NS"])
+            self.assertEqual(set(remaining_types), {"A", "MX", "NS"})
+            self.assertEqual(session.scalars(select(Commit)).all(), [])
+            remaining_panic_requests = session.scalars(select(PanicRequest)).all()
+            self.assertEqual([item.id for item in remaining_panic_requests], [shutdown_request.id])
             self.assertIsNone(membership.intent_public_key)
             self.assertIsNone(membership.panic_public_key)
-

@@ -755,6 +755,78 @@ select {
   margin: 20px 0 34px;
 }
 
+.intent-generator {
+  margin: 20px 0;
+  padding: 24px;
+  border: 1px solid #cfe0d7;
+  border-radius: 16px;
+  background: #f8fcfa;
+  box-shadow: 0 4px 18px rgb(21 48 39 / 4%);
+}
+
+.intent-generator h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.intent-generator form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.intent-generator label {
+  display: grid;
+  gap: 7px;
+  color: #405149;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.intent-generator select,
+.intent-generator input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid #cbd8d1;
+  border-radius: 8px;
+  color: #20372e;
+  background: #fff;
+}
+
+.intent-time-grid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.intent-generator .primary-button {
+  grid-column: 1 / -1;
+  width: auto;
+  justify-self: start;
+  margin-top: 2px;
+}
+
+.field-note,
+.intent-file-name {
+  display: block;
+  margin: 6px 0 0;
+  color: #75827c;
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.reveal-step-label {
+  margin: 0 0 8px;
+  color: #4c946d;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .commit-form,
 .scheduled-commits {
   padding: 24px;
@@ -956,6 +1028,11 @@ select {
 
 @media (max-width: 820px) {
   .commit-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .intent-generator form,
+  .intent-time-grid {
     grid-template-columns: 1fr;
   }
 }

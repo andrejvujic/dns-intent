@@ -170,6 +170,8 @@ export default function DomainConfiguration({
           ieRecord={ieRecord}
           userId={userId}
           domainId={domain.id}
+          domainName={domain.name}
+          records={domain.records.filter((record) => record.type !== 'IE')}
           onNotify={onNotify}
           onApplied={onReloadDomain}
         />

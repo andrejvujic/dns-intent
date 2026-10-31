@@ -80,6 +80,21 @@ and that same Base64 nonce. The reveal endpoint recalculates the commitment,
 checks the intent validity window and domain, applies the protected add/update/
 delete operation, and marks the commit `CONSUMED` to prevent replay.
 
+The domain UI can generate the Intent JSON without manual editing. Sign the
+downloaded file locally and save a bundle with:
+
+```bash
+cd backend
+python -m scripts.create_commit /path/to/intent.json \
+  --private-key 'BASE64_PRIVATE_KEY' \
+  --output signing-bundle.json
+```
+
+Upload `signing-bundle.json` in the commit form. Keep both the original Intent
+file and the bundle secure: the bundle contains the nonce needed later. During
+reveal, upload the original Intent JSON and paste `reveal_secret.nonce` from the
+bundle.
+
 ## Running the frontend
 
 Requires Node.js 20.19+ or 22.12+.

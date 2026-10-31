@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { getScheduledCommits, revealCommit, scheduleCommit } from '../api/domains.js';
+import IntentGenerator from './IntentGenerator.jsx';
 
 function policyValue(value, fallback = 'Not configured') {
   return value === undefined || value === null || value === '' ? fallback : value;
@@ -13,7 +14,7 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
-export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, onNotify, onApplied }) {
+export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, domainName, records, onNotify, onApplied }) {
   const policy = ieRecord.value || {};
   const [hash, setHash] = useState('');
   const [signature, setSignature] = useState('');
@@ -21,7 +22,8 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [revealingId, setRevealingId] = useState(null);
-  const [intentJson, setIntentJson] = useState('');
+  const [intent, setIntent] = useState(null);
+  const [intentFilename, setIntentFilename] = useState('');
   const [nonce, setNonce] = useState('');
   const [isApplying, setIsApplying] = useState(false);
   const operations = Array.isArray(policy.protected_operations)
@@ -62,19 +64,54 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
     }
   }
 
+  async function loadSigningBundle(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const bundle = JSON.parse(await file.text());
+      const commit = bundle.commit_request || bundle;
+      if (typeof commit.hash !== 'string' || typeof commit.signature !== 'string') {
+        throw new Error('missing fields');
+      }
+      setHash(commit.hash);
+      setSignature(commit.signature);
+      onNotify('success', 'Hash i potpis su učitani iz signing bundle fajla.');
+    } catch {
+      event.target.value = '';
+      onNotify('error', 'Signing bundle mora sadržati commit_request.hash i commit_request.signature.');
+    }
+  }
+
   function openReveal(commitId) {
     setRevealingId(commitId);
-    setIntentJson('');
+    setIntent(null);
+    setIntentFilename('');
     setNonce('');
+  }
+
+  async function loadIntentFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setIntent(null);
+      setIntentFilename('');
+      return;
+    }
+    try {
+      const parsed = JSON.parse(await file.text());
+      setIntent(parsed);
+      setIntentFilename(file.name);
+    } catch {
+      event.target.value = '';
+      setIntent(null);
+      setIntentFilename('');
+      onNotify('error', 'Izabrani Intent fajl nije validan JSON.');
+    }
   }
 
   async function handleReveal(event) {
     event.preventDefault();
-    let intent;
-    try {
-      intent = JSON.parse(intentJson);
-    } catch {
-      onNotify('error', 'Intent mora biti validan JSON.');
+    if (!intent) {
+      onNotify('error', 'Izaberite originalni Intent JSON fajl.');
       return;
     }
 
@@ -86,7 +123,8 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
       });
       onNotify('success', 'Commit je potvrđen i DNS promjena je primijenjena.');
       setRevealingId(null);
-      setIntentJson('');
+      setIntent(null);
+      setIntentFilename('');
       setNonce('');
       await loadCommits();
       onApplied().catch((error) => {
@@ -121,16 +159,31 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
         </dl>
       </section>
 
+      <IntentGenerator
+        domainName={domainName}
+        records={records}
+        protectedTypes={Array.isArray(policy.protected_operations) ? policy.protected_operations : []}
+        onNotify={onNotify}
+      />
+
       <section className="commit-workspace">
         <form className="commit-form" onSubmit={handleSubmit}>
           <div>
-            <p className="policy-kicker">Commit phase</p>
+            <p className="policy-kicker">2. Commit</p>
             <h2>Zakaži potpisanu promjenu</h2>
             <p className="commit-help">
               Unesite Base64 SHA-256 hash i njegov Ed25519 potpis. Nonce ostaje na
               klijentu i šalje se serveru tek kasnije, zajedno sa intentom, u reveal fazi.
             </p>
           </div>
+          <label htmlFor="signing-bundle">Signing bundle JSON</label>
+          <input
+            id="signing-bundle"
+            type="file"
+            accept="application/json,.json"
+            onChange={loadSigningBundle}
+          />
+          <p className="field-note">Možete učitati rezultat skripte ili ručno unijeti polja ispod.</p>
           <label htmlFor="commit-hash">Commit hash</label>
           <input
             id="commit-hash"
@@ -195,15 +248,16 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
                   )}
                   {revealingId === commit.id && (
                     <form className="reveal-form" onSubmit={handleReveal}>
-                      <label htmlFor={`intent-${commit.id}`}>Intent JSON</label>
-                      <textarea
+                      <p className="reveal-step-label">3. Reveal</p>
+                      <label htmlFor={`intent-${commit.id}`}>Originalni Intent JSON fajl</label>
+                      <input
                         id={`intent-${commit.id}`}
-                        rows={8}
-                        value={intentJson}
-                        onChange={(event) => setIntentJson(event.target.value)}
-                        placeholder={'{\n  "domain": "example.test",\n  "operation": "ADD_RECORD",\n  ...\n}'}
+                        type="file"
+                        accept="application/json,.json"
+                        onChange={loadIntentFile}
                         required
                       />
+                      {intentFilename && <small className="intent-file-name">Učitan: {intentFilename}</small>}
                       <label htmlFor={`nonce-${commit.id}`}>Nonce</label>
                       <input
                         id={`nonce-${commit.id}`}

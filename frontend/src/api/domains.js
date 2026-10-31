@@ -1,18 +1,74 @@
-async function getJson(url) {
-  const response = await fetch(url);
-  const data = await response.json().catch(() => null);
+function validationErrorMessage(error) {
+  if (typeof error === 'string') return error;
+  if (!error || typeof error !== 'object') return 'Request could not be completed.';
+
+  const location = Array.isArray(error.loc)
+    ? error.loc.filter((part) => part !== 'body').join('.')
+    : '';
+  const message = error.msg || 'Invalid value';
+  return location ? `${location}: ${message}` : message;
+}
+
+function errorMessage(detail) {
+  if (Array.isArray(detail)) {
+    return detail.map(validationErrorMessage).join(' • ');
+  }
+
+  return validationErrorMessage(detail);
+}
+
+export class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+async function requestJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const data = response.status === 204
+    ? null
+    : await response.json().catch(() => null);
 
   if (!response.ok) {
-    throw new Error(data?.detail || 'Domain data is currently unavailable.');
+    throw new ApiError(
+      data?.detail
+        ? errorMessage(data.detail)
+        : 'Domain request could not be completed.',
+      response.status,
+    );
   }
 
   return data;
 }
 
 export function getUserDomains(userId) {
-  return getJson(`/api/users/${userId}/domains`);
+  return requestJson(`/api/users/${userId}/domains`);
 }
 
 export function getUserDomain(userId, domainId) {
-  return getJson(`/api/users/${userId}/domains/${domainId}`);
+  return requestJson(`/api/users/${userId}/domains/${domainId}`);
+}
+
+export function createDomainRecord(userId, domainId, payload) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/records`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateDomainRecord(userId, domainId, recordId, payload) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/records/${recordId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteDomainRecord(userId, domainId, recordId) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/records/${recordId}`, {
+    method: 'DELETE',
+  });
 }

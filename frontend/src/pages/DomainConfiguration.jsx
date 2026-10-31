@@ -1,28 +1,86 @@
 import { useMemo, useState } from 'react';
 
-const HIGH_RISK_TYPES = new Set(['NS', 'DS', 'DNSKEY']);
+import {
+  createDomainRecord,
+  deleteDomainRecord,
+  updateDomainRecord,
+} from '../api/domains.js';
+import DirectDnsRecordManager from '../components/DirectDnsRecordManager.jsx';
+import DnsIntentProtectedManager from '../components/DnsIntentProtectedManager.jsx';
+import { recordContent, recordName } from '../components/DnsRecordTable.jsx';
 
-function recordName(record) {
-  return record.value?.name || '@';
-}
-
-function recordContent(record) {
-  const value = record.value || {};
-  return value.address || value.host || value.exchange || value.target || value.content || value.value || '—';
-}
-
-export default function DomainConfiguration({ domain, isLoading, onBack }) {
+export default function DomainConfiguration({
+  userId,
+  domain,
+  isLoading,
+  onBack,
+  onReloadDomain,
+  onNotify,
+}) {
   const [query, setQuery] = useState('');
-  const filteredRecords = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery || !domain) return domain?.records || [];
+  const [isMutating, setIsMutating] = useState(false);
+  const ieRecord = domain?.records.find((record) => record.type === 'IE');
+  const dnsIntentEnabled = Boolean(ieRecord);
 
-    return domain.records.filter((record) => (
+  const filteredRecords = useMemo(() => {
+    const records = (domain?.records || []).filter((record) => record.type !== 'IE');
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return records;
+
+    return records.filter((record) => (
       `${record.type} ${recordName(record)} ${recordContent(record)}`
         .toLowerCase()
         .includes(normalizedQuery)
     ));
   }, [domain, query]);
+
+  async function runMutation(request, successMessage) {
+    setIsMutating(true);
+
+    try {
+      await request();
+      onNotify('success', successMessage);
+      onReloadDomain().catch((reloadError) => {
+        onNotify('error', `The change was saved, but refresh failed: ${reloadError.message}`);
+      });
+      return true;
+    } catch (requestError) {
+      onNotify('error', requestError.message);
+
+      if (requestError.status === 409) {
+        try {
+          await onReloadDomain();
+        } catch (reloadError) {
+          onNotify('error', `${requestError.message} ${reloadError.message}`);
+        }
+      }
+
+      return false;
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
+  function handleCreate(payload) {
+    return runMutation(
+      () => createDomainRecord(userId, domain.id, payload),
+      'DNS record was added successfully.',
+    );
+  }
+
+  function handleUpdate(recordId, value) {
+    return runMutation(
+      () => updateDomainRecord(userId, domain.id, recordId, { value }),
+      'DNS record was updated successfully.',
+    );
+  }
+
+  function handleDelete(recordId) {
+    return runMutation(
+      () => deleteDomainRecord(userId, domain.id, recordId),
+      'DNS record was deleted successfully.',
+    );
+  }
 
   if (isLoading || !domain) {
     return <div className="page-container"><div className="loading-state">Loading DNS configuration…</div></div>;
@@ -36,57 +94,25 @@ export default function DomainConfiguration({ domain, isLoading, onBack }) {
         <h1>{domain.name}</h1>
       </section>
 
-      <section className="records-panel">
-        <div className="records-toolbar">
-          <h2>DNS records</h2>
-          <label className="record-search">
-            <span aria-hidden="true">⌕</span>
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search records"
-              aria-label="Search DNS records"
-            />
-          </label>
-        </div>
-
-        <div className="table-scroll">
-          <table className="records-table">
-            <thead>
-              <tr>
-                <th>Type</th>
-                <th>Name</th>
-                <th>Content</th>
-                <th>TTL</th>
-                <th>Priority</th>
-                <th>Protection</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRecords.map((record) => (
-                <tr key={record.id}>
-                  <td><span className={`record-type type-${record.type.toLowerCase()}`}>{record.type}</span></td>
-                  <td className="record-name">{recordName(record)}</td>
-                  <td><code>{recordContent(record)}</code></td>
-                  <td>{record.value?.ttl ?? 'Auto'}</td>
-                  <td>{record.value?.priority ?? '—'}</td>
-                  <td>
-                    {HIGH_RISK_TYPES.has(record.type) ? (
-                      <span className="protected-label">Intent required</span>
-                    ) : (
-                      <span className="standard-label">Standard</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {filteredRecords.length === 0 && (
-            <div className="table-empty">No records match your search.</div>
-          )}
-        </div>
-      </section>
+      {dnsIntentEnabled ? (
+        <DnsIntentProtectedManager
+          ieRecord={ieRecord}
+          records={filteredRecords}
+          query={query}
+          onQueryChange={setQuery}
+        />
+      ) : (
+        <DirectDnsRecordManager
+          records={filteredRecords}
+          query={query}
+          onQueryChange={setQuery}
+          isMutating={isMutating}
+          onCreate={handleCreate}
+          onUpdate={handleUpdate}
+          onDelete={handleDelete}
+          onNotify={onNotify}
+        />
+      )}
     </div>
   );
 }

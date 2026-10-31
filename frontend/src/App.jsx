@@ -21,7 +21,7 @@ function App() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [user, setUser] = useState(getStoredUser);
-  const [error, setError] = useState('');
+  const [notification, setNotification] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [domains, setDomains] = useState([]);
   const [isLoadingDomains, setIsLoadingDomains] = useState(false);
@@ -29,13 +29,13 @@ function App() {
   const [isLoadingDomain, setIsLoadingDomain] = useState(false);
 
   useEffect(() => {
-    if (!error) {
+    if (!notification) {
       return undefined;
     }
 
-    const timeoutId = window.setTimeout(() => setError(''), 4500);
+    const timeoutId = window.setTimeout(() => setNotification(null), 4500);
     return () => window.clearTimeout(timeoutId);
-  }, [error]);
+  }, [notification]);
 
   useEffect(() => {
     if (!user) {
@@ -51,7 +51,7 @@ function App() {
         if (!ignoreResult) setDomains(userDomains);
       })
       .catch((loadError) => {
-        if (!ignoreResult) setError(loadError.message);
+        if (!ignoreResult) notify('error', loadError.message);
       })
       .finally(() => {
         if (!ignoreResult) setIsLoadingDomains(false);
@@ -64,7 +64,7 @@ function App() {
 
   async function handleSubmit(event) {
     event.preventDefault();
-    setError('');
+    setNotification(null);
     setIsSubmitting(true);
 
     try {
@@ -72,7 +72,7 @@ function App() {
       localStorage.setItem('dnsintent-user', JSON.stringify(data.user));
       setUser(data.user);
     } catch (loginError) {
-      setError(loginError.message);
+      notify('error', loginError.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -85,17 +85,42 @@ function App() {
   }
 
   async function handleSelectDomain(domainId) {
-    setError('');
+    setNotification(null);
     setIsLoadingDomain(true);
 
     try {
       const domain = await getUserDomain(user.id, domainId);
       setSelectedDomain(domain);
     } catch (loadError) {
-      setError(loadError.message);
+      notify('error', loadError.message);
     } finally {
       setIsLoadingDomain(false);
     }
+  }
+
+  function notify(type, message) {
+    setNotification({
+      type,
+      title: type === 'success' ? 'Success' : 'Something went wrong',
+      message,
+    });
+  }
+
+  async function reloadSelectedDomain() {
+    if (!user || !selectedDomain) return null;
+
+    const updatedDomain = await getUserDomain(user.id, selectedDomain.id);
+    setSelectedDomain(updatedDomain);
+    setDomains((currentDomains) => currentDomains.map((domain) => (
+      domain.id === updatedDomain.id
+        ? {
+            ...domain,
+            record_count: updatedDomain.record_count,
+            updated_at: updatedDomain.updated_at,
+          }
+        : domain
+    )));
+    return updatedDomain;
   }
 
   return (
@@ -109,9 +134,12 @@ function App() {
           />
           {selectedDomain || isLoadingDomain ? (
             <DomainConfiguration
+              userId={user.id}
               domain={selectedDomain}
               isLoading={isLoadingDomain}
               onBack={() => setSelectedDomain(null)}
+              onReloadDomain={reloadSelectedDomain}
+              onNotify={notify}
             />
           ) : (
             <DomainsHome
@@ -184,17 +212,21 @@ function App() {
         </>
       )}
 
-      {error && (
-        <div className="toast toast-error" role="alert" aria-live="assertive">
-          <span className="toast-icon" aria-hidden="true">!</span>
+      {notification && (
+        <div
+          className={`toast toast-${notification.type}`}
+          role={notification.type === 'error' ? 'alert' : 'status'}
+          aria-live={notification.type === 'error' ? 'assertive' : 'polite'}
+        >
+          <span className="toast-icon" aria-hidden="true">{notification.type === 'success' ? '✓' : '!'}</span>
           <div className="toast-content">
-            <strong>Something went wrong</strong>
-            <p>{error}</p>
+            <strong>{notification.title}</strong>
+            <p>{notification.message}</p>
           </div>
           <button
             className="toast-close"
             type="button"
-            onClick={() => setError('')}
+            onClick={() => setNotification(null)}
             aria-label="Close notification"
           >
             ×

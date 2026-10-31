@@ -1,15 +1,41 @@
 # DNS Intent
 
-## Tehnologije
+## Quick start (for reviewers)
 
-- Backend: Python, FastAPI, SQLAlchemy, SQLite, Pydantic i Uvicorn
-- Frontend: React, Vite i JavaScript
+Requires Git, Python 3.10+ and Node.js 20.19+ or 22.12+.
 
-## Pokretanje backenda
+Windows: double-click `demo.cmd` in this folder, or run from PowerShell:
 
-Potrebni su Python 3.10 ili noviji.
+```powershell
+.\demo.cmd
+```
 
-Priprema virtuelnog okruženja i zavisnosti:
+Linux/macOS or Git Bash:
+
+```bash
+bash demo.sh
+```
+
+- Installs dependencies.
+- Deletes the database and creates a fresh one with test data.
+- Starts the backend and frontend.
+- App: `http://localhost:5173`. Login details are printed in the terminal.
+- `Ctrl+C` stops the app.
+
+For day-to-day team work, use `start.cmd` / `start.sh`: runs `git pull` on
+`main` and starts the app without deleting the database. Shared steps for
+both scripts live in `scripts/common.sh`.
+
+## Tech stack
+
+- Backend: Python, FastAPI, SQLAlchemy, SQLite, Pydantic, Uvicorn
+- Frontend: React, Vite, JavaScript
+
+## Running the backend
+
+Requires Python 3.10+.
+
+Create the virtual environment and install dependencies:
 
 ```bash
 cd backend
@@ -18,29 +44,27 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Pokretanje backenda:
-
-```bash
-uvicorn app.main:app --reload
-```
-
-Na Windows PowerShell-u virtuelno okruženje se aktivira komandom:
+Activate the virtual environment on Windows PowerShell (instead of `source`):
 
 ```powershell
 .venv\Scripts\Activate.ps1
 ```
 
-Backend je dostupan na `http://localhost:8000`, a health endpoint na
-`http://localhost:8000/api/health`.
+Start the backend:
 
-`backend/.env.example` dokumentuje dostupne promenljive okruženja. Njihovo
-podešavanje nije obavezno jer podrazumevane vrednosti već rade lokalno.
+```bash
+uvicorn app.main:app --reload
+```
 
-## Pokretanje frontenda
+- Backend: `http://localhost:8000`
+- Health endpoint: `http://localhost:8000/api/health`
+- Environment variables are listed in `backend/.env.example` (optional; defaults work locally).
 
-Potreban je Node.js 20.19+ ili 22.12+.
+## Running the frontend
 
-U drugom terminalu pokrenite:
+Requires Node.js 20.19+ or 22.12+.
+
+In a second terminal:
 
 ```bash
 cd frontend
@@ -48,9 +72,9 @@ npm install
 npm run dev
 ```
 
-Frontend je dostupan na `http://localhost:5173`.
+Frontend: `http://localhost:5173`
 
-## Struktura
+## Structure
 
 ```text
 .

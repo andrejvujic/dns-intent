@@ -33,40 +33,30 @@ SEED_USERS = (
         "last_name": "Jovanović",
         "username": "ana.jovanovic",
         "email": "ana.jovanovic@dnsintent.test",
-        "intent_public_key": "3nIw0irxDa9R1COiik//mqK0P4Hcdln5xCvTGJQ648k=",
-        "panic_public_key": "kdu+6mZv0im5fQfmbChDe/9LPuGcSzzD+aNq5rKCNnU=",
     },
     {
         "first_name": "Marko",
         "last_name": "Petrović",
         "username": "marko.petrovic",
         "email": "marko.petrovic@dnsintent.test",
-        "intent_public_key": "zwNh8nuMnLBN75oywlU7bNITUvXutXPKTABxXUcBxTw=",
-        "panic_public_key": "ze0RzKDFdESLXxy9W7wDxq0Ez9/PRk1VE53k8DgZ1E4=",
     },
     {
         "first_name": "Jelena",
         "last_name": "Nikolić",
         "username": "jelena.nikolic",
         "email": "jelena.nikolic@dnsintent.test",
-        "intent_public_key": "nW7j1bVwK1vM9Ta2xp3p1HGcb+VnbvqpUOvCK6L2g18=",
-        "panic_public_key": "x7/zt5ApyyU9G537rSO1JGJWj4kNcfehdZunuYcbPTQ=",
     },
     {
         "first_name": "Nikola",
         "last_name": "Stojanović",
         "username": "nikola.stojanovic",
         "email": "nikola.stojanovic@dnsintent.test",
-        "intent_public_key": "kPqC/x32Kq1q4K7TLU3/I+UAFDGGc1KzSNefIKCJZ68=",
-        "panic_public_key": "z8c5+6M9Pq4Zn963Hmmu9IQ8jS1H2oPT6D6Q4qEDHAE=",
     },
     {
         "first_name": "Milica",
         "last_name": "Ilić",
         "username": "milica.ilic",
         "email": "milica.ilic@dnsintent.test",
-        "intent_public_key": "tVcVqebZYmpd5hQlsfHuGqS7r40Lsr4iXrjiNR2Qayc=",
-        "panic_public_key": "4nh273dJUH2RTAKrtR3SMJT02PKiFW3QsrCkNAPod1g=",
     },
 )
 
@@ -101,14 +91,8 @@ def seed_database(session: Session) -> None:
         registrar="Development Registrar",
     )
 
-    for user, data in zip(users, SEED_USERS, strict=True):
-        domain.user_memberships.append(
-            UserDomain(
-                user=user,
-                intent_public_key=data["intent_public_key"],
-                panic_public_key=data["panic_public_key"],
-            )
-        )
+    for user in users:
+        domain.user_memberships.append(UserDomain(user=user))
 
     domain.records.extend(
         [

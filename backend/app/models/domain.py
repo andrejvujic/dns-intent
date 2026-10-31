@@ -57,8 +57,8 @@ class UserDomain(Base):
     domain_id: Mapped[int] = mapped_column(
         ForeignKey("domains.id", ondelete="CASCADE"), index=True
     )
-    intent_public_key: Mapped[str] = mapped_column(String(44))
-    panic_public_key: Mapped[str] = mapped_column(String(44))
+    intent_public_key: Mapped[str | None] = mapped_column(String(44), nullable=True)
+    panic_public_key: Mapped[str | None] = mapped_column(String(44), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False

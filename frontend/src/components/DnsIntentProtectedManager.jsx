@@ -251,8 +251,8 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
               {commits.map((commit) => (
                 <article className="commit-item" key={commit.id}>
                   <div className="commit-item-top">
-                    <span className={`commit-status status-${commit.status.toLowerCase()}`}>
-                      {commit.status}
+                    <span className={`commit-status status-${commit.cancellation_pending ? 'blocked' : commit.status.toLowerCase()}`}>
+                      {commit.cancellation_pending ? 'CANCELLATION PENDING' : commit.status}
                     </span>
                     <span>{commit.username}</span>
                   </div>
@@ -261,7 +261,13 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
                     <div><dt>Created</dt><dd>{formatDate(commit.received_at)}</dd></div>
                     <div><dt>Ready at</dt><dd>{formatDate(commit.matures_at)}</dd></div>
                   </dl>
-                  {commit.status === 'READY' && revealingId !== commit.id && (
+                  {commit.cancellation_pending && (
+                    <div className="commit-blocked-notice">
+                      <strong>Temporarily blocked</strong>
+                      <span>Panic cancellation #{commit.cancellation_panic_id} is being voted on. This commit cannot be applied unless that cancellation is rejected or expires.</span>
+                    </div>
+                  )}
+                  {commit.status === 'READY' && !commit.cancellation_pending && revealingId !== commit.id && (
                     <button
                       className="commit-reveal-button"
                       type="button"

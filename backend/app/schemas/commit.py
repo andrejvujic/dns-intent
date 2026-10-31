@@ -21,6 +21,8 @@ class CommitResponse(BaseModel):
     consumed_at: datetime | None
     user_id: int
     username: str
+    cancellation_pending: bool = False
+    cancellation_panic_id: int | None = None
 
 
 class CommitReveal(BaseModel):

@@ -81,7 +81,9 @@ export default function PendingPanicChanges({ userId, domainId, onNotify, onAppl
       <p className="commit-help">Review the requested operation, sign the exact JSON with your panic key, then cast one final vote.</p>
       {items.length === 0 ? <p className="commit-empty">No panic changes have been submitted.</p> : (
         <div className="commit-list">
-          {items.map((item) => <article className="commit-item" key={item.id}>
+          {items.map((item) => {
+            const isTied = item.status === 'PENDING' && item.for_count > 0 && item.for_count === item.against_count;
+            return <article className="commit-item" key={item.id}>
             <div className="commit-item-top">
               <span className={`commit-status panic-status status-${item.status.toLowerCase()}`}>PANIC · {item.status}</span>
               <span>Requested by {item.created_by_username}</span>
@@ -92,6 +94,9 @@ export default function PendingPanicChanges({ userId, domainId, onNotify, onAppl
               <div><dt>Accepted</dt><dd>{item.for_count} / {item.required_quorum}</dd></div>
               <div><dt>Rejected</dt><dd>{item.against_count} / {item.required_quorum}</dd></div>
             </dl>
+            {isTied && <div className="panic-tie-notice"><strong>Voting is tied.</strong><span>The next vote is the tie-breaker.</span></div>}
+            {item.status === 'APPLIED' && <div className="panic-decision-notice decision-accepted"><strong>Decision reached: ACCEPT</strong><span>The acceptance quorum was met and the change was applied.</span></div>}
+            {item.status === 'REJECTED' && <div className="panic-decision-notice decision-rejected"><strong>Decision reached: REJECT</strong><span>The rejection quorum was met. No change was applied.</span></div>}
             <details className="panic-json-review"><summary>Review requested JSON</summary><pre>{JSON.stringify(item.change, null, 2)}</pre></details>
             <button className="commit-reveal-button panic-download-button" type="button" onClick={() => downloadJson(item.change)}>Download JSON to sign</button>
             {item.status === 'PENDING' && !item.user_vote && <div className="reveal-form panic-vote-form">
@@ -106,14 +111,14 @@ export default function PendingPanicChanges({ userId, domainId, onNotify, onAppl
                 <>
                   <p className="field-note">Signature verified. Your vote is final and can be submitted only once.</p>
                   <div className="reveal-actions panic-vote-actions">
-                    <button type="button" disabled={busyId === item.id} onClick={() => vote(item, 'REJECT')}>ODBIJ</button>
-                    <button type="submit" disabled={busyId === item.id} onClick={() => vote(item, 'ACCEPT')}>PRIHVATI</button>
+                    <button className="panic-reject-button" type="button" disabled={busyId === item.id} onClick={() => vote(item, 'REJECT')}><span>✕</span> REJECT</button>
+                    <button className="panic-accept-button" type="button" disabled={busyId === item.id} onClick={() => vote(item, 'ACCEPT')}><span>✓</span> ACCEPT</button>
                   </div>
                 </>
               )}
             </div>}
             {item.user_vote && <div className="panic-user-vote"><span>✓</span><p>Your vote: <strong>{item.user_vote}</strong>{item.created_by_user_id === userId ? ' · recorded automatically as the request author' : ''}</p></div>}
-          </article>)}
+          </article>;})}
         </div>
       )}
     </section>

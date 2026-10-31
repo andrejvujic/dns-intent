@@ -986,6 +986,24 @@ select {
   background: #e8edeb;
 }
 
+.commit-status.status-blocked {
+  color: #7a4c12;
+  background: #fff0d6;
+}
+
+.commit-blocked-notice {
+  display: grid;
+  gap: 4px;
+  margin-top: 14px;
+  padding: 11px 12px;
+  border: 1px solid #ead7b6;
+  border-radius: 8px;
+  color: #76521d;
+  background: #fff9ed;
+  font-size: 0.73rem;
+  line-height: 1.45;
+}
+
 .commit-item code {
   display: block;
   overflow: hidden;
@@ -1111,7 +1129,15 @@ select {
 .panic-json-review pre { overflow: auto; max-height: 260px; padding: 12px; border: 1px solid #dfe6e2; border-radius: 8px; color: #29463b; background: #fff; font: 0.7rem ui-monospace, SFMono-Regular, Menlo, monospace; }
 .panic-download-button { color: #315f4d; border: 1px solid #cdd8d2; background: #fff; }
 .panic-vote-form textarea { display: block; }
-.panic-vote-actions button:first-child { color: #7a4038; border-color: #ddc8c4; }
+.panic-vote-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.panic-vote-actions button { min-height: 48px; justify-content: center; border-radius: 9px; font-size: 0.82rem; font-weight: 900; letter-spacing: 0.04em; box-shadow: 0 3px 9px rgb(21 48 39 / 10%); }
+.panic-vote-actions .panic-reject-button { color: #fff; border-color: #a94138; background: #b94a40; }
+.panic-vote-actions .panic-accept-button { color: #fff; border-color: #246b50; background: #246b50; }
+.panic-vote-actions button:disabled { opacity: 0.55; cursor: wait; }
+.panic-tie-notice { display: flex; align-items: center; gap: 7px; margin-top: 14px; padding: 10px 12px; border: 1px solid #e3d19e; border-radius: 8px; color: #725616; background: #fff8dc; font-size: 0.74rem; }
+.panic-decision-notice { display: grid; gap: 3px; margin-top: 14px; padding: 10px 12px; border: 1px solid; border-radius: 8px; font-size: 0.74rem; }
+.panic-decision-notice.decision-accepted { color: #286347; border-color: #bfe2ce; background: #eaf6ef; }
+.panic-decision-notice.decision-rejected { color: #7a4038; border-color: #e3c5c1; background: #fbefed; }
 .panic-user-vote { display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 10px 12px; border-radius: 8px; color: #286347; background: #eaf6ef; font-size: 0.73rem; }
 .panic-user-vote span { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; color: #fff; background: #37865f; font-size: 0.65rem; }
 .panic-user-vote p { margin: 0; }

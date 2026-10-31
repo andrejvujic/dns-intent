@@ -118,7 +118,13 @@ def get_active_membership(
     return membership
 
 
-def commit_response(commit: Commit, user: User) -> CommitResponse:
+def commit_response(
+    commit: Commit,
+    user: User,
+    *,
+    cancellation_pending: bool = False,
+    cancellation_panic_id: int | None = None,
+) -> CommitResponse:
     return CommitResponse(
         id=commit.id,
         hash=commit.hash,
@@ -128,7 +134,29 @@ def commit_response(commit: Commit, user: User) -> CommitResponse:
         consumed_at=commit.consumed_at,
         user_id=user.id,
         username=user.username,
+        cancellation_pending=cancellation_pending,
+        cancellation_panic_id=cancellation_panic_id,
     )
+
+
+def pending_cancellation_for_commit(
+    domain_id: int, commit_id: int, session: Session
+) -> PanicRequest | None:
+    now = datetime.now(timezone.utc)
+    requests = session.scalars(
+        select(PanicRequest).where(
+            PanicRequest.domain_id == domain_id,
+            PanicRequest.operation == "CANCEL_COMMIT",
+            PanicRequest.status == PanicRequestStatus.PENDING,
+        )
+    ).all()
+    for request in requests:
+        expires_at = request.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at > now and (request.change_json or {}).get("commit_id") == commit_id:
+            return request
+    return None
 
 
 def panic_response(request: PanicRequest, user_id: int) -> PanicResponse:
@@ -512,7 +540,18 @@ def list_scheduled_commits(
     if changed:
         session.commit()
 
-    return [commit_response(commit, user) for commit, user in rows]
+    responses = []
+    for commit, user in rows:
+        cancellation = pending_cancellation_for_commit(domain_id, commit.id, session)
+        responses.append(
+            commit_response(
+                commit,
+                user,
+                cancellation_pending=cancellation is not None,
+                cancellation_panic_id=cancellation.id if cancellation else None,
+            )
+        )
+    return responses
 
 
 def load_panic_request(
@@ -574,6 +613,22 @@ def create_panic_change(
         raise HTTPException(status_code=409, detail="This panic request_id has already been used.")
     if session.scalar(select(PanicRequest.id).where(PanicRequest.hash == calculated_hash)):
         raise HTTPException(status_code=409, detail="This panic change has already been submitted.")
+
+    if payload.change.operation == "CANCEL_COMMIT":
+        target_commit = session.scalar(
+            select(Commit)
+            .join(UserDomain, Commit.user_domain_id == UserDomain.id)
+            .where(
+                Commit.id == payload.change.commit_id,
+                UserDomain.domain_id == domain.id,
+            )
+        )
+        if target_commit is None:
+            raise HTTPException(status_code=404, detail="Scheduled commit was not found.")
+        if target_commit.status not in (CommitStatus.HOLDING, CommitStatus.READY):
+            raise HTTPException(status_code=409, detail="Only an active scheduled commit can be cancelled.")
+        if pending_cancellation_for_commit(domain.id, target_commit.id, session):
+            raise HTTPException(status_code=409, detail="This commit already has a pending cancellation vote.")
 
     quorum = int((ie_record.value or {}).get("panic_quorum", 1))
     request = PanicRequest(
@@ -766,6 +821,15 @@ def reveal_and_apply_commit(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This commit was cancelled or expired and cannot be revealed.",
+        )
+    cancellation = pending_cancellation_for_commit(domain.id, commit.id, session)
+    if cancellation is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Commit application is temporarily blocked by pending panic "
+                f"cancellation #{cancellation.id}. It can be applied only if that cancellation is rejected or expires."
+            ),
         )
 
     now = datetime.now(timezone.utc)

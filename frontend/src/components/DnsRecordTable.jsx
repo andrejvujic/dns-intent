@@ -71,9 +71,7 @@ export function recordContent(record) {
   }
 }
 
-export default function DnsRecordTable({ records, dnsIntentEnabled, isBusy, onEdit, onDelete }) {
-  const showActions = !dnsIntentEnabled;
-
+export default function DnsRecordTable({ records, protectedTypes = new Set(), isBusy, onEdit, onDelete }) {
   return (
     <div className="table-scroll">
       <table className="records-table">
@@ -84,7 +82,7 @@ export default function DnsRecordTable({ records, dnsIntentEnabled, isBusy, onEd
           <col className="col-ttl" />
           <col className="col-priority" />
           <col className="col-protection" />
-          {showActions && <col className="col-actions" />}
+          <col className="col-actions" />
         </colgroup>
         <thead>
           <tr>
@@ -94,36 +92,43 @@ export default function DnsRecordTable({ records, dnsIntentEnabled, isBusy, onEd
             <th>TTL</th>
             <th>Priority</th>
             <th>Status / Protection</th>
-            {showActions && <th className="actions-heading">Actions</th>}
+            <th className="actions-heading">Actions</th>
           </tr>
         </thead>
         <tbody>
-          {records.map((record) => (
-            <tr key={record.id}>
-              <td><span className={`record-type type-${record.type.toLowerCase()}`}>{record.type}</span></td>
-              <td className="record-name">{recordName(record)}</td>
-              <td className="record-content"><code title={recordContent(record)}>{recordContent(record)}</code></td>
-              <td>{record.value?.ttl ?? 'Auto'}</td>
-              <td>{record.value?.priority ?? '—'}</td>
-              <td>
-                <span className={dnsIntentEnabled ? 'protected-label' : 'direct-label'}>
-                  {dnsIntentEnabled ? 'DNS Intent' : 'Direct'}
-                </span>
-              </td>
-              {showActions && (
-                <td className="record-actions">
-                  <button type="button" onClick={() => onEdit(record)} disabled={isBusy}>
-                    <EditIcon />
-                    <span>Edit</span>
-                  </button>
-                  <button className="delete-action" type="button" onClick={() => onDelete(record)} disabled={isBusy}>
-                    <DeleteIcon />
-                    <span>Delete</span>
-                  </button>
+          {records.map((record) => {
+            const isProtected = protectedTypes.has(record.type);
+            return (
+              <tr key={record.id}>
+                <td><span className={`record-type type-${record.type.toLowerCase()}`}>{record.type}</span></td>
+                <td className="record-name">{recordName(record)}</td>
+                <td className="record-content"><code title={recordContent(record)}>{recordContent(record)}</code></td>
+                <td>{record.value?.ttl ?? 'Auto'}</td>
+                <td>{record.value?.priority ?? '—'}</td>
+                <td>
+                  <span className={isProtected ? 'protected-label' : 'direct-label'}>
+                    {isProtected ? 'DNS Intent' : 'Direct'}
+                  </span>
                 </td>
-              )}
-            </tr>
-          ))}
+                <td className="record-actions">
+                  {isProtected ? (
+                    <span className="locked-label">Locked</span>
+                  ) : (
+                    <>
+                      <button type="button" onClick={() => onEdit(record)} disabled={isBusy}>
+                        <EditIcon />
+                        <span>Edit</span>
+                      </button>
+                      <button className="delete-action" type="button" onClick={() => onDelete(record)} disabled={isBusy}>
+                        <DeleteIcon />
+                        <span>Delete</span>
+                      </button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       {records.length === 0 && <div className="table-empty">No records match your search.</div>}

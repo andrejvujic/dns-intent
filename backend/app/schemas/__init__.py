@@ -1,5 +1,10 @@
 from app.schemas.auth import LoginRequest, LoginResponse, UserResponse
-from app.schemas.domain import DomainDetailResponse, DomainRecordResponse, DomainSummary
+from app.schemas.domain import (
+    DomainDetailResponse,
+    DomainMemberResponse,
+    DomainRecordResponse,
+    DomainSummary,
+)
 from app.schemas.domain_record import (
     DomainRecordCreate,
     DomainRecordUpdate,
@@ -8,6 +13,7 @@ from app.schemas.domain_record import (
 
 __all__ = [
     "DomainDetailResponse",
+    "DomainMemberResponse",
     "DomainRecordResponse",
     "DomainRecordCreate",
     "DomainRecordUpdate",

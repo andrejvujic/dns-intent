@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.models import Domain, DomainRecord, DomainRecordType, User, UserDomain
 from app.schemas import (
     DomainDetailResponse,
+    DomainMemberResponse,
     DomainRecordCreate,
     DomainRecordResponse,
     DomainRecordUpdate,
@@ -63,9 +64,9 @@ def get_authorized_domain(user_id: int, domain_id: int, session: Session) -> Dom
     return domain
 
 
-def ensure_dns_intent_disabled(domain_id: int, session: Session) -> None:
-    ie_record_id = session.scalar(
-        select(DomainRecord.id)
+def find_ie_record(domain_id: int, session: Session) -> DomainRecord | None:
+    return session.scalar(
+        select(DomainRecord)
         .join(DomainRecordType)
         .where(
             DomainRecord.domain_id == domain_id,
@@ -73,12 +74,34 @@ def ensure_dns_intent_disabled(domain_id: int, session: Session) -> None:
         )
         .limit(1)
     )
-    if ie_record_id is not None:
+
+
+def get_protected_operations(domain_id: int, session: Session) -> set[str]:
+    ie_record = find_ie_record(domain_id, session)
+    if ie_record is None:
+        return set()
+
+    operations = (ie_record.value or {}).get("protected_operations", [])
+    return {str(operation).upper() for operation in operations}
+
+
+def ensure_intent_not_enabled(domain_id: int, session: Session) -> None:
+    if find_ie_record(domain_id, session) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="DNS Intent is already enabled for this domain.",
+        )
+
+
+def ensure_type_mutable(
+    record_type_name: str, domain_id: int, session: Session
+) -> None:
+    if record_type_name in get_protected_operations(domain_id, session):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "DNS Intent is enabled for this domain. Use the protected "
-                "commit/reveal or panic flow."
+                f"DNS record type {record_type_name} is protected by DNS Intent. "
+                "Use the commit/reveal or panic flow."
             ),
         )
 
@@ -169,6 +192,26 @@ def get_user_domain(
     )
 
 
+@router.get("/{domain_id}/members", response_model=list[DomainMemberResponse])
+def list_domain_members(
+    user_id: int, domain_id: int, session: DbSession
+) -> list[DomainMemberResponse]:
+    get_authorized_domain(user_id, domain_id, session)
+
+    members = session.scalars(
+        select(User)
+        .join(UserDomain)
+        .where(
+            UserDomain.domain_id == domain_id,
+            UserDomain.is_active.is_(True),
+            User.is_active.is_(True),
+        )
+        .order_by(User.first_name, User.last_name)
+    ).all()
+
+    return [DomainMemberResponse.model_validate(member) for member in members]
+
+
 @router.post(
     "/{domain_id}/records",
     response_model=DomainRecordResponse,
@@ -181,7 +224,6 @@ def create_domain_record(
     session: DbSession,
 ) -> DomainRecordResponse:
     domain = get_authorized_domain(user_id, domain_id, session)
-    ensure_dns_intent_disabled(domain.id, session)
 
     if payload.type == "IE":
         raise HTTPException(
@@ -197,6 +239,8 @@ def create_domain_record(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unsupported DNS record type: {payload.type}",
         )
+
+    ensure_type_mutable(record_type.name, domain.id, session)
 
     value = validated_value(record_type.name, payload.value)
     ensure_record_is_unique(session, domain.id, record_type.id, value)
@@ -220,7 +264,7 @@ def enable_dns_intent(
     session: DbSession,
 ) -> DomainRecordResponse:
     domain = get_authorized_domain(user_id, domain_id, session)
-    ensure_dns_intent_disabled(domain.id, session)
+    ensure_intent_not_enabled(domain.id, session)
 
     record_type = session.scalar(
         select(DomainRecordType).where(DomainRecordType.name == "IE")
@@ -235,8 +279,8 @@ def enable_dns_intent(
         "name": "@",
         "ttl": 3600,
         "panic_quorum": payload.panic_quorum,
-        "intent_delay_seconds": payload.intent_delay_seconds,
-        "protected_record_types": payload.protected_record_types,
+        "delay_seconds": payload.delay_seconds,
+        "protected_operations": payload.protected_operations,
     }
 
     record = DomainRecord(domain=domain, record_type=record_type, value=value)
@@ -258,7 +302,6 @@ def update_domain_record(
     session: DbSession,
 ) -> DomainRecordResponse:
     domain = get_authorized_domain(user_id, domain_id, session)
-    ensure_dns_intent_disabled(domain.id, session)
 
     record = session.scalar(
         select(DomainRecord)
@@ -270,6 +313,8 @@ def update_domain_record(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="DNS record not found.",
         )
+
+    ensure_type_mutable(record.record_type.name, domain.id, session)
 
     value = validated_value(record.record_type.name, payload.value)
     ensure_record_is_unique(
@@ -296,7 +341,6 @@ def delete_domain_record(
     session: DbSession,
 ) -> Response:
     domain = get_authorized_domain(user_id, domain_id, session)
-    ensure_dns_intent_disabled(domain.id, session)
 
     record = session.scalar(
         select(DomainRecord)
@@ -306,12 +350,15 @@ def delete_domain_record(
             DomainRecord.domain_id == domain.id,
             DomainRecordType.name != "IE",
         )
+        .options(selectinload(DomainRecord.record_type))
     )
     if record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="DNS record not found.",
         )
+
+    ensure_type_mutable(record.record_type.name, domain.id, session)
 
     session.delete(record)
     session.commit()

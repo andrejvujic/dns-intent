@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class DomainSummary(BaseModel):
@@ -23,3 +23,11 @@ class DomainRecordResponse(BaseModel):
 
 class DomainDetailResponse(DomainSummary):
     records: list[DomainRecordResponse]
+
+
+class DomainMemberResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    first_name: str
+    last_name: str

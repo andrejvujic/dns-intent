@@ -1,13 +1,14 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import ConfirmDialog from './ConfirmDialog.jsx';
-import DnsRecordForm from './DnsRecordForm.jsx';
+import DnsRecordForm, { RECORD_TYPES } from './DnsRecordForm.jsx';
 import DnsRecordTable from './DnsRecordTable.jsx';
 
 export default function DirectDnsRecordManager({
   records,
   query,
   onQueryChange,
+  protectedTypes = new Set(),
   isMutating,
   onCreate,
   onUpdate,
@@ -16,6 +17,10 @@ export default function DirectDnsRecordManager({
 }) {
   const [formState, setFormState] = useState(null);
   const [recordToDelete, setRecordToDelete] = useState(null);
+  const availableTypes = useMemo(
+    () => RECORD_TYPES.filter((type) => !protectedTypes.has(type)),
+    [protectedTypes],
+  );
 
   async function handleFormSubmit(payload) {
     const succeeded = formState.mode === 'edit'
@@ -45,7 +50,12 @@ export default function DirectDnsRecordManager({
               aria-label="Search DNS records"
             />
           </label>
-          <button className="add-record-button" type="button" onClick={() => setFormState({ mode: 'add' })} disabled={isMutating}>
+          <button
+            className="add-record-button"
+            type="button"
+            onClick={() => setFormState({ mode: 'add' })}
+            disabled={isMutating || availableTypes.length === 0}
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 5v14M5 12h14" />
             </svg>
@@ -56,7 +66,7 @@ export default function DirectDnsRecordManager({
 
       <DnsRecordTable
         records={records}
-        dnsIntentEnabled={false}
+        protectedTypes={protectedTypes}
         isBusy={isMutating}
         onEdit={(record) => setFormState({ mode: 'edit', record })}
         onDelete={setRecordToDelete}
@@ -66,6 +76,7 @@ export default function DirectDnsRecordManager({
         <DnsRecordForm
           mode={formState.mode}
           record={formState.record}
+          availableTypes={availableTypes}
           isSubmitting={isMutating}
           onSubmit={handleFormSubmit}
           onClose={() => setFormState(null)}

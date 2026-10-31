@@ -3,10 +3,13 @@ import { useMemo, useState } from 'react';
 import {
   createDomainRecord,
   deleteDomainRecord,
+  enableDnsIntent,
+  getDomainMembers,
   updateDomainRecord,
 } from '../api/domains.js';
 import DirectDnsRecordManager from '../components/DirectDnsRecordManager.jsx';
 import DnsIntentProtectedManager from '../components/DnsIntentProtectedManager.jsx';
+import IntentEnableForm from '../components/IntentEnableForm.jsx';
 import { recordContent, recordName } from '../components/DnsRecordTable.jsx';
 
 export default function DomainConfiguration({
@@ -19,8 +22,17 @@ export default function DomainConfiguration({
 }) {
   const [query, setQuery] = useState('');
   const [isMutating, setIsMutating] = useState(false);
+  const [isEnablingIntent, setIsEnablingIntent] = useState(false);
+  const [members, setMembers] = useState([]);
+  const [isLoadingMembers, setIsLoadingMembers] = useState(false);
+  const [isSubmittingIntent, setIsSubmittingIntent] = useState(false);
   const ieRecord = domain?.records.find((record) => record.type === 'IE');
   const dnsIntentEnabled = Boolean(ieRecord);
+  const protectedTypes = useMemo(() => {
+    const operations = ieRecord?.value?.protected_operations;
+    if (!Array.isArray(operations)) return new Set();
+    return new Set(operations.map((type) => type.toUpperCase()));
+  }, [ieRecord]);
 
   const filteredRecords = useMemo(() => {
     const records = (domain?.records || []).filter((record) => record.type !== 'IE');
@@ -82,6 +94,38 @@ export default function DomainConfiguration({
     );
   }
 
+  async function openIntentForm() {
+    if (dnsIntentEnabled || isEnablingIntent) return;
+    setIsEnablingIntent(true);
+    setIsLoadingMembers(true);
+
+    try {
+      setMembers(await getDomainMembers(userId, domain.id));
+    } catch (membersError) {
+      onNotify('error', membersError.message);
+      setIsEnablingIntent(false);
+    } finally {
+      setIsLoadingMembers(false);
+    }
+  }
+
+  async function handleEnableIntent(payload) {
+    setIsSubmittingIntent(true);
+
+    try {
+      await enableDnsIntent(userId, domain.id, payload);
+      onNotify('success', 'DNS Intent protection was enabled.');
+      setIsEnablingIntent(false);
+      onReloadDomain().catch((reloadError) => {
+        onNotify('error', `Protection was enabled, but refresh failed: ${reloadError.message}`);
+      });
+    } catch (requestError) {
+      onNotify('error', requestError.message);
+    } finally {
+      setIsSubmittingIntent(false);
+    }
+  }
+
   if (isLoading || !domain) {
     return <div className="page-container"><div className="loading-state">Loading DNS configuration…</div></div>;
   }
@@ -92,24 +136,47 @@ export default function DomainConfiguration({
 
       <section className="page-heading domain-heading">
         <h1>{domain.name}</h1>
+        <div className="intent-toggle">
+          <div className="intent-toggle-copy">
+            <strong>DNS Intent</strong>
+            <span>{dnsIntentEnabled ? 'Protected' : 'Standard'}</span>
+          </div>
+          <button
+            className={`switch${dnsIntentEnabled ? ' is-on' : ''}`}
+            type="button"
+            role="switch"
+            aria-checked={dnsIntentEnabled}
+            aria-label={dnsIntentEnabled ? 'DNS Intent is enabled' : 'Enable DNS Intent protection'}
+            onClick={openIntentForm}
+            disabled={dnsIntentEnabled}
+          >
+            <span className="switch-knob" />
+          </button>
+        </div>
       </section>
 
-      {dnsIntentEnabled ? (
-        <DnsIntentProtectedManager
-          ieRecord={ieRecord}
-          records={filteredRecords}
-          query={query}
-          onQueryChange={setQuery}
-        />
-      ) : (
-        <DirectDnsRecordManager
-          records={filteredRecords}
-          query={query}
-          onQueryChange={setQuery}
-          isMutating={isMutating}
-          onCreate={handleCreate}
-          onUpdate={handleUpdate}
-          onDelete={handleDelete}
+      {dnsIntentEnabled && <DnsIntentProtectedManager ieRecord={ieRecord} />}
+
+      <DirectDnsRecordManager
+        records={filteredRecords}
+        query={query}
+        onQueryChange={setQuery}
+        protectedTypes={protectedTypes}
+        isMutating={isMutating}
+        onCreate={handleCreate}
+        onUpdate={handleUpdate}
+        onDelete={handleDelete}
+        onNotify={onNotify}
+      />
+
+      {isEnablingIntent && (
+        <IntentEnableForm
+          domain={domain}
+          members={members}
+          isLoadingMembers={isLoadingMembers}
+          isSubmitting={isSubmittingIntent}
+          onSubmit={handleEnableIntent}
+          onClose={() => setIsEnablingIntent(false)}
           onNotify={onNotify}
         />
       )}

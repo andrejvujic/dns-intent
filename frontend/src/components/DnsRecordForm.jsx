@@ -161,7 +161,7 @@ function buildValue(type, values) {
   return value;
 }
 
-function RecordTypeSelect({ value, disabled, onChange }) {
+function RecordTypeSelect({ value, types, disabled, onChange }) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const containerRef = useRef(null);
@@ -179,7 +179,7 @@ function RecordTypeSelect({ value, disabled, onChange }) {
 
   function openMenu() {
     if (disabled) return;
-    const selectedIndex = RECORD_TYPES.indexOf(value);
+    const selectedIndex = types.indexOf(value);
     const nextIndex = selectedIndex >= 0 ? selectedIndex : 0;
     setActiveIndex(nextIndex);
     setIsOpen(true);
@@ -207,12 +207,12 @@ function RecordTypeSelect({ value, disabled, onChange }) {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       const direction = event.key === 'ArrowDown' ? 1 : -1;
-      const nextIndex = (index + direction + RECORD_TYPES.length) % RECORD_TYPES.length;
+      const nextIndex = (index + direction + types.length) % types.length;
       setActiveIndex(nextIndex);
       optionRefs.current[nextIndex]?.focus();
     } else if (event.key === 'Home' || event.key === 'End') {
       event.preventDefault();
-      const nextIndex = event.key === 'Home' ? 0 : RECORD_TYPES.length - 1;
+      const nextIndex = event.key === 'Home' ? 0 : types.length - 1;
       setActiveIndex(nextIndex);
       optionRefs.current[nextIndex]?.focus();
     } else if (event.key === 'Escape') {
@@ -243,7 +243,7 @@ function RecordTypeSelect({ value, disabled, onChange }) {
 
       {isOpen && (
         <div className="type-select-menu" role="listbox" aria-labelledby="record-type-label">
-          {RECORD_TYPES.map((recordType, index) => (
+          {types.map((recordType, index) => (
             <button
               ref={(element) => { optionRefs.current[index] = element; }}
               className={`type-select-option${value === recordType ? ' selected' : ''}`}
@@ -265,7 +265,7 @@ function RecordTypeSelect({ value, disabled, onChange }) {
   );
 }
 
-export default function DnsRecordForm({ mode, record, isSubmitting, onSubmit, onClose, onNotify }) {
+export default function DnsRecordForm({ mode, record, availableTypes = RECORD_TYPES, isSubmitting, onSubmit, onClose, onNotify }) {
   const isEdit = mode === 'edit';
   const [type, setType] = useState(record?.type || '');
   const [values, setValues] = useState(() => initialValues(record?.type || '', record));
@@ -331,7 +331,7 @@ export default function DnsRecordForm({ mode, record, isSubmitting, onSubmit, on
               {isEdit ? (
                 <input value={type} readOnly aria-readonly="true" aria-labelledby="record-type-label" />
               ) : (
-                <RecordTypeSelect value={type} onChange={handleTypeChange} disabled={isSubmitting} />
+                <RecordTypeSelect value={type} types={availableTypes} onChange={handleTypeChange} disabled={isSubmitting} />
               )}
             </div>
 

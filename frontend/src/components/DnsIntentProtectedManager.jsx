@@ -1,10 +1,8 @@
-import DnsRecordTable from './DnsRecordTable.jsx';
-
 function policyValue(value, fallback = 'Not configured') {
   return value === undefined || value === null || value === '' ? fallback : value;
 }
 
-export default function DnsIntentProtectedManager({ ieRecord, records, query, onQueryChange }) {
+export default function DnsIntentProtectedManager({ ieRecord }) {
   const policy = ieRecord.value || {};
   const operations = Array.isArray(policy.protected_operations)
     ? policy.protected_operations.join(', ')
@@ -16,7 +14,7 @@ export default function DnsIntentProtectedManager({ ieRecord, records, query, on
         <span className="intent-notice-icon" aria-hidden="true">✓</span>
         <div>
           <strong>DNS Intent is enabled for this domain.</strong>
-          <p>DNS record changes must use the commit/reveal or panic flow.</p>
+          <p>Protected record types require the commit/reveal or panic flow; others can still change directly.</p>
         </div>
       </section>
 
@@ -30,26 +28,6 @@ export default function DnsIntentProtectedManager({ ieRecord, records, query, on
           <div><dt>Panic quorum</dt><dd>{policyValue(policy.panic_quorum)}</dd></div>
           <div><dt>Protected operations</dt><dd>{operations}</dd></div>
         </dl>
-        <div className="protected-flow-placeholder">
-          Commit/reveal and panic controls will appear here when backend endpoints become available.
-        </div>
-      </section>
-
-      <section className="records-panel">
-        <div className="records-toolbar">
-          <h2>DNS records</h2>
-          <label className="record-search">
-            <span aria-hidden="true">⌕</span>
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
-              placeholder="Search records"
-              aria-label="Search DNS records"
-            />
-          </label>
-        </div>
-        <DnsRecordTable records={records} dnsIntentEnabled />
       </section>
     </>
   );

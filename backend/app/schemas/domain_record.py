@@ -312,17 +312,17 @@ class IntentEnforcementCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     panic_quorum: int = Field(ge=1)
-    intent_delay_seconds: int = Field(ge=0)
-    protected_record_types: list[str] = Field(min_length=1)
+    delay_seconds: int = Field(ge=1800)
+    protected_operations: list[str] = Field(min_length=1)
 
-    @field_validator("protected_record_types")
+    @field_validator("protected_operations")
     @classmethod
-    def validate_protected_record_types(cls, values: list[str]) -> list[str]:
+    def validate_protected_operations(cls, values: list[str]) -> list[str]:
         normalized = list(dict.fromkeys(value.strip().upper() for value in values))
         supported = set(DEFAULT_DOMAIN_RECORD_TYPES) - {"IE"}
         if any(value not in supported for value in normalized):
             raise ValueError(
-                "protected_record_types must contain only supported DNS record types "
+                "protected_operations must contain only supported DNS record types "
                 "(IE cannot be protected)"
             )
         return normalized

@@ -60,6 +60,24 @@ uvicorn app.main:app --reload
 - Health endpoint: `http://localhost:8000/api/health`
 - Environment variables are listed in `backend/.env.example` (optional; defaults work locally).
 
+### Email notifications
+
+When a signed intent is scheduled, every active member of that domain receives a
+personalized notification. Email is sent in the background, so a temporary SMTP
+failure does not undo a successfully scheduled intent.
+
+For Gmail, fill in these values in `backend/.env`:
+
+```dotenv
+SMTP_USERNAME=your-address@gmail.com
+SMTP_PASSWORD=your-16-character-google-app-password
+SMTP_FROM_EMAIL=your-address@gmail.com
+```
+
+`backend/.env` is ignored by Git. Use the Google app password rather than the
+regular password for the Gmail account. The remaining SMTP defaults already
+target Gmail on port 587 with STARTTLS.
+
 Enabling DNS Intent generates an Ed25519 intent and panic key pair for every active
 domain member in the browser. Public keys are stored by the backend; private keys
 are downloaded as an organized JSON file and never uploaded.

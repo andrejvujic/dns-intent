@@ -2,7 +2,7 @@ import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -38,6 +38,11 @@ from app.services.crypto import (
     decode_b64,
     validate_public_key,
     verify_signature,
+)
+from app.services.email import (
+    EmailRecipient,
+    ScheduledIntentEmail,
+    send_scheduled_intent_email,
 )
 
 
@@ -391,6 +396,7 @@ def schedule_commit(
     user_id: int,
     domain_id: int,
     payload: CommitCreate,
+    background_tasks: BackgroundTasks,
     session: DbSession,
 ) -> CommitResponse:
     domain = get_authorized_domain(user_id, domain_id, session)
@@ -437,6 +443,30 @@ def schedule_commit(
     session.commit()
     session.refresh(commit)
     user = session.get(User, user_id)
+    recipients = session.scalars(
+        select(User)
+        .join(UserDomain)
+        .where(
+            UserDomain.domain_id == domain.id,
+            UserDomain.is_active.is_(True),
+            User.is_active.is_(True),
+        )
+        .order_by(User.id)
+    ).all()
+    background_tasks.add_task(
+        send_scheduled_intent_email,
+        [
+            EmailRecipient(email=recipient.email, first_name=recipient.first_name)
+            for recipient in recipients
+        ],
+        ScheduledIntentEmail(
+            domain_name=domain.name,
+            scheduled_by=f"{user.first_name} {user.last_name}",
+            commit_hash=commit.hash,
+            received_at=commit.received_at,
+            matures_at=commit.matures_at,
+        ),
+    )
     return commit_response(commit, user)
 
 

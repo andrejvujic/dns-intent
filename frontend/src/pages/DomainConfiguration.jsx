@@ -33,6 +33,7 @@ export default function DomainConfiguration({
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
   const [isSubmittingIntent, setIsSubmittingIntent] = useState(false);
   const [activeView, setActiveView] = useState('records');
+  const [shutdownChange, setShutdownChange] = useState(null);
   const ieRecord = domain?.records.find((record) => record.type === 'IE');
   const dnsIntentEnabled = Boolean(ieRecord);
   const protectedTypes = useMemo(() => {
@@ -138,6 +139,27 @@ export default function DomainConfiguration({
     }
   }
 
+  function handleDisableIntent() {
+    const change = {
+      type: 'PANIC_CHANGE',
+      request_id: crypto.randomUUID(),
+      domain: domain.name,
+      operation: 'DISABLE_DNS_INTENT',
+      expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+    };
+    const blob = new Blob([`${JSON.stringify(change, null, 2)}\n`], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${domain.name.replace(/[^a-z0-9.-]/gi, '_')}-disable-dns-intent-panic.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+
+    setShutdownChange(change);
+    setActiveView('commits');
+    onNotify('success', 'The DNS Intent shutdown panic JSON was downloaded. Sign it with your panic key, then submit it below.');
+  }
+
   if (isLoading || !domain) {
     return <div className="page-container"><div className="loading-state">Loading DNS configuration…</div></div>;
   }
@@ -158,9 +180,8 @@ export default function DomainConfiguration({
             type="button"
             role="switch"
             aria-checked={dnsIntentEnabled}
-            aria-label={dnsIntentEnabled ? 'DNS Intent is enabled' : 'Enable DNS Intent protection'}
-            onClick={openIntentForm}
-            disabled={dnsIntentEnabled}
+            aria-label={dnsIntentEnabled ? 'Start DNS Intent shutdown' : 'Enable DNS Intent protection'}
+            onClick={dnsIntentEnabled ? handleDisableIntent : openIntentForm}
           >
             <span className="switch-knob" />
           </button>
@@ -236,6 +257,8 @@ export default function DomainConfiguration({
             records={domain.records.filter((record) => record.type !== 'IE')}
             onNotify={onNotify}
             onApplied={onReloadDomain}
+            onPanicSubmitted={() => setActiveView('panic')}
+            initialPanicChange={shutdownChange}
           />
         </section>
       )}

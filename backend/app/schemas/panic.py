@@ -6,7 +6,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.schemas.domain_record import validate_record_value
 
 
-PANIC_OPERATIONS = {"ADD_RECORD", "UPDATE_RECORD", "DELETE_RECORD", "CANCEL_COMMIT"}
+PANIC_OPERATIONS = {
+    "ADD_RECORD",
+    "UPDATE_RECORD",
+    "DELETE_RECORD",
+    "CANCEL_COMMIT",
+    "DISABLE_DNS_INTENT",
+}
 
 
 class PanicChange(BaseModel):
@@ -44,6 +50,10 @@ class PanicChange(BaseModel):
     def validate_change(self) -> "PanicChange":
         if self.expires_at.tzinfo is None:
             raise ValueError("expires_at must include a timezone")
+        if self.operation == "DISABLE_DNS_INTENT":
+            if any((self.record_type, self.record_id, self.commit_id, self.value)):
+                raise ValueError("DISABLE_DNS_INTENT does not accept record or commit fields")
+            return self
         if self.operation == "CANCEL_COMMIT":
             if self.commit_id is None:
                 raise ValueError("CANCEL_COMMIT requires commit_id")

@@ -115,10 +115,33 @@ setup_frontend() {
 run_app() {
     step "Starting the app"
     cd "$BACKEND_DIR"
-    "$VENV_PYTHON" -m uvicorn app.main:app --reload --log-level warning &
+    if "$VENV_PYTHON" -c 'import socket, sys; sock = socket.socket(); sock.settimeout(0.3); result = sock.connect_ex(("127.0.0.1", 8000)); sock.close(); sys.exit(0 if result == 0 else 1)' >/dev/null 2>&1; then
+        HINT="stop the process already using port 8000, then run the script again."
+        fail "Port 8000 is already in use."
+    fi
+    "$VENV_PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --log-level warning &
     BACKEND_PID=$!
     trap - ERR
     trap 'echo; echo "${YELLOW}Stopping backend and frontend...${RESET}"; kill "$BACKEND_PID" 2>/dev/null || true' EXIT
+
+    # Do not start Vite until the API is actually accepting connections. Without
+    # this check, the browser can issue its first /api request while Uvicorn is
+    # still importing the app, which Vite reports as ECONNREFUSED.
+    info "Waiting for the backend health check..."
+    BACKEND_ATTEMPTS=0
+    until "$VENV_PYTHON" -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/api/health", timeout=1).read()' >/dev/null 2>&1; do
+        if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+            HINT="read the backend error above; if port 8000 is already used, stop the other process and run again."
+            fail "Backend stopped before it became ready."
+        fi
+        BACKEND_ATTEMPTS=$((BACKEND_ATTEMPTS + 1))
+        if [ "$BACKEND_ATTEMPTS" -ge 50 ]; then
+            HINT="check whether another process is using port 8000, then run the script again."
+            fail "Backend did not become ready within 15 seconds."
+        fi
+        sleep 0.3
+    done
+    ok "Backend health check passed"
 
     echo
     echo "${BOLD}${GREEN}  ============================================${RESET}"

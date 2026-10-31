@@ -1,12 +1,7 @@
 {
-    "domain": "dnsintent.test",
-    "operation": "ADD_RECORD",
-    "record_type": "A",
-    "value": {
-        "name": "@",
-        "ttl": 3600,
-        "address": "192.0.17.2"
-    },
-    "not_before": "2026-10-31T18:00:00Z",
-    "valid_until": "2027-10-31T19:30:00Z"
+  "type": "PANIC_CHANGE",
+  "request_id": "dc315814-9f78-4610-a827-d91523cf1a7d",
+  "domain": "dnsintent.test",
+  "operation": "DISABLE_DNS_INTENT",
+  "expires_at": "2026-11-01T21:07:08.490000Z"
 }

@@ -14,7 +14,7 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
-export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, domainName, records, onNotify, onApplied }) {
+export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, domainName, records, onNotify, onApplied, onPanicSubmitted, initialPanicChange = null }) {
   const policy = ieRecord.value || {};
   const [hash, setHash] = useState('');
   const [signature, setSignature] = useState('');
@@ -26,8 +26,8 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
   const [intentFilename, setIntentFilename] = useState('');
   const [nonce, setNonce] = useState('');
   const [isApplying, setIsApplying] = useState(false);
-  const [panicMode, setPanicMode] = useState(false);
-  const [panicChange, setPanicChange] = useState(null);
+  const [panicMode, setPanicMode] = useState(Boolean(initialPanicChange));
+  const [panicChange, setPanicChange] = useState(initialPanicChange);
   const operations = Array.isArray(policy.protected_operations)
     ? policy.protected_operations.join(', ')
     : policyValue(policy.protected_operations);
@@ -47,6 +47,14 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
     loadCommits();
   }, [loadCommits]);
 
+  useEffect(() => {
+    if (!initialPanicChange) return;
+    setPanicMode(true);
+    setPanicChange(initialPanicChange);
+    setHash('');
+    setSignature('');
+  }, [initialPanicChange]);
+
   async function handleSubmit(event) {
     event.preventDefault();
     setIsSubmitting(true);
@@ -62,6 +70,7 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
       setPanicChange(null);
       onNotify('success', panicMode ? 'The panic change was submitted for quorum voting.' : 'The commit was scheduled and its hold period has started.');
       await loadCommits();
+      if (panicMode) onPanicSubmitted?.();
     } catch (error) {
       onNotify('error', error.message);
     } finally {
@@ -198,7 +207,11 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
               {panicMode ? ' The signature must use your panic key.' : ' The nonce stays local until the reveal phase.'}
             </p>
           </div>
-          {panicMode && <><label htmlFor="panic-json">Panic Change JSON</label><input id="panic-json" type="file" accept="application/json,.json" onChange={loadPanicChange} required /></>}
+          {panicMode && <>
+            <label htmlFor="panic-json">Panic Change JSON</label>
+            <input id="panic-json" type="file" accept="application/json,.json" onChange={loadPanicChange} required={!panicChange} />
+            {panicChange && <p className="field-note">Prepared operation: {panicChange.operation}</p>}
+          </>}
           <label htmlFor="signing-bundle">Signing bundle JSON</label>
           <input
             id="signing-bundle"

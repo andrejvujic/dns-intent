@@ -655,6 +655,30 @@ def create_panic_change(
         if pending_cancellation_for_commit(domain.id, target_commit.id, session):
             raise HTTPException(status_code=409, detail="This commit already has a pending cancellation vote.")
 
+    if payload.change.operation == "DISABLE_DNS_INTENT":
+        shutdown_requests = session.scalars(
+            select(PanicRequest).where(
+                PanicRequest.domain_id == domain.id,
+                PanicRequest.operation == "DISABLE_DNS_INTENT",
+                PanicRequest.status == PanicRequestStatus.PENDING,
+            )
+        ).all()
+        now = datetime.now(timezone.utc)
+        pending_shutdown = False
+        for shutdown_request in shutdown_requests:
+            shutdown_expires_at = shutdown_request.expires_at
+            if shutdown_expires_at.tzinfo is None:
+                shutdown_expires_at = shutdown_expires_at.replace(tzinfo=timezone.utc)
+            if shutdown_expires_at > now:
+                pending_shutdown = True
+            else:
+                shutdown_request.status = PanicRequestStatus.EXPIRED
+        if pending_shutdown:
+            raise HTTPException(
+                status_code=409,
+                detail="DNS Intent already has a pending shutdown vote.",
+            )
+
     quorum = int((ie_record.value or {}).get("panic_quorum", 1))
     request = PanicRequest(
         request_id=payload.change.request_id,
@@ -988,6 +1012,32 @@ def apply_intent(domain: Domain, intent: Intent, session: Session) -> int | None
 
 def apply_panic_change(domain: Domain, change: dict, session: Session) -> int | None:
     operation = change["operation"]
+    if operation == "DISABLE_DNS_INTENT":
+        ie_record = find_ie_record(domain.id, session)
+        if ie_record is None:
+            raise HTTPException(status_code=409, detail="DNS Intent is not enabled for this domain.")
+
+        protected_types = get_protected_operations(domain.id, session)
+        protected_records = session.scalars(
+            select(DomainRecord)
+            .join(DomainRecordType)
+            .where(
+                DomainRecord.domain_id == domain.id,
+                DomainRecordType.name.in_(protected_types),
+            )
+        ).all()
+        for record in protected_records:
+            session.delete(record)
+        session.delete(ie_record)
+
+        memberships = session.scalars(
+            select(UserDomain).where(UserDomain.domain_id == domain.id)
+        ).all()
+        for membership in memberships:
+            membership.intent_public_key = None
+            membership.panic_public_key = None
+        return None
+
     if operation == "CANCEL_COMMIT":
         commit = session.scalar(
             select(Commit)

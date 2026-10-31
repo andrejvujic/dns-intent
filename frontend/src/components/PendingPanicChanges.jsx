@@ -13,6 +13,7 @@ function downloadJson(change) {
 }
 
 function changeSummary(change) {
+  if (change.operation === 'DISABLE_DNS_INTENT') return 'Disable DNS Intent and delete all protected records';
   if (change.operation === 'CANCEL_COMMIT') return `Cancel scheduled commit #${change.commit_id}`;
   if (change.operation === 'ADD_RECORD') return `Add ${change.record_type} record`;
   return `${change.operation === 'UPDATE_RECORD' ? 'Update' : 'Delete'} DNS record #${change.record_id}`;

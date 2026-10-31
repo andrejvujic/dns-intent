@@ -54,11 +54,17 @@ export default function IntentGenerator({ domainName, records, protectedTypes, c
   }
 
   function saveIntent(recordPayload = null) {
-    const times = timeFields();
-    if (!times) return false;
+    const hasNoValidityWindow = panicMode && ['CANCEL_COMMIT', 'DISABLE_DNS_INTENT'].includes(operation);
+    const times = hasNoValidityWindow ? null : timeFields();
+    if (!hasNoValidityWindow && !times) return false;
 
     let intent;
-    if (panicMode && operation === 'CANCEL_COMMIT') {
+    if (panicMode && operation === 'DISABLE_DNS_INTENT') {
+      intent = {
+        type: 'PANIC_CHANGE', request_id: crypto.randomUUID(), domain: domainName,
+        operation, expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      };
+    } else if (panicMode && operation === 'CANCEL_COMMIT') {
       if (!commitId) {
         onNotify('error', 'Select a scheduled commit.');
         return false;
@@ -105,8 +111,8 @@ export default function IntentGenerator({ domainName, records, protectedTypes, c
   function handleGenerate(event) {
     event.preventDefault();
     if (!panicMode && !timeFields()) return;
-    if (panicMode && operation !== 'CANCEL_COMMIT' && !timeFields()) return;
-    if (panicMode && operation === 'CANCEL_COMMIT') {
+    if (panicMode && !['CANCEL_COMMIT', 'DISABLE_DNS_INTENT'].includes(operation) && !timeFields()) return;
+    if (panicMode && ['CANCEL_COMMIT', 'DISABLE_DNS_INTENT'].includes(operation)) {
       saveIntent();
       return;
     }
@@ -151,6 +157,7 @@ export default function IntentGenerator({ domainName, records, protectedTypes, c
             <option value="UPDATE_RECORD">Update record</option>
             <option value="DELETE_RECORD">Delete record</option>
             {panicMode && <option value="CANCEL_COMMIT">Cancel scheduled commit</option>}
+            {panicMode && <option value="DISABLE_DNS_INTENT">Disable DNS Intent</option>}
           </select>
         </label>
         {operation === 'CANCEL_COMMIT' && (
@@ -161,7 +168,7 @@ export default function IntentGenerator({ domainName, records, protectedTypes, c
             ))}
           </select></label>
         )}
-        {operation !== 'ADD_RECORD' && operation !== 'CANCEL_COMMIT' && (
+        {!['ADD_RECORD', 'CANCEL_COMMIT', 'DISABLE_DNS_INTENT'].includes(operation) && (
           <label>
             <span>Protected DNS record</span>
             <select value={recordId} onChange={(event) => setRecordId(event.target.value)} required>
@@ -174,7 +181,7 @@ export default function IntentGenerator({ domainName, records, protectedTypes, c
             </select>
           </label>
         )}
-        {operation !== 'CANCEL_COMMIT' && <div className="intent-time-grid">
+        {!['CANCEL_COMMIT', 'DISABLE_DNS_INTENT'].includes(operation) && <div className="intent-time-grid">
           <label>
             <span>Not before</span>
             <input type="datetime-local" value={notBefore} onChange={(event) => setNotBefore(event.target.value)} required />
@@ -185,7 +192,7 @@ export default function IntentGenerator({ domainName, records, protectedTypes, c
           </label>
         </div>}
         <button className="primary-button" type="submit">
-          {['DELETE_RECORD', 'CANCEL_COMMIT'].includes(operation) ? `Download ${panicMode ? 'Panic' : 'Intent'} JSON` : 'Continue to record details'}
+          {['DELETE_RECORD', 'CANCEL_COMMIT', 'DISABLE_DNS_INTENT'].includes(operation) ? `Download ${panicMode ? 'Panic' : 'Intent'} JSON` : 'Continue to record details'}
         </button>
       </form>
 

@@ -64,6 +64,17 @@ Enabling DNS Intent generates an Ed25519 intent and panic key pair for every act
 domain member in the browser. Public keys are stored by the backend; private keys
 are downloaded as an organized JSON file and never uploaded.
 
+When DNS Intent is enabled, a member can schedule a change by submitting its
+Base64 SHA-256 commitment hash and Ed25519 signature. The backend verifies the
+signature and starts the configured hold period. All domain members can review
+scheduled commits and their creation/maturity times in the domain UI.
+
+The nonce is generated once by the client and used to calculate
+`SHA-256(canonical_intent || nonce)`. It is deliberately not sent while scheduling
+the commit; the same nonce is sent only with the intent during the later reveal
+phase, allowing the server to reproduce the hash without exposing the intended
+change during the hold period.
+
 ## Running the frontend
 
 Requires Node.js 20.19+ or 22.12+.

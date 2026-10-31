@@ -63,6 +63,18 @@ export function enableDnsIntent(userId, domainId, payload) {
   });
 }
 
+export function scheduleCommit(userId, domainId, payload) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/commits`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getScheduledCommits(userId, domainId) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/commits`);
+}
+
 export function createDomainRecord(userId, domainId, payload) {
   return requestJson(`/api/users/${userId}/domains/${domainId}/records`, {
     method: 'POST',

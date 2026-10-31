@@ -165,7 +165,14 @@ export default function DomainConfiguration({
         </div>
       </section>
 
-      {dnsIntentEnabled && <DnsIntentProtectedManager ieRecord={ieRecord} />}
+      {dnsIntentEnabled && (
+        <DnsIntentProtectedManager
+          ieRecord={ieRecord}
+          userId={userId}
+          domainId={domain.id}
+          onNotify={onNotify}
+        />
+      )}
 
       <DirectDnsRecordManager
         records={filteredRecords}

@@ -12,7 +12,7 @@ async function generateKeyPair() {
   ]);
   return {
     public_key: bytesToBase64(publicKey),
-    private_key_pkcs8: bytesToBase64(privateKey),
+    private_key: bytesToBase64(privateKey),
   };
 }
 

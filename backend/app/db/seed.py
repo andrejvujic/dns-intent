@@ -29,10 +29,10 @@ SEED_PASSWORD = "DnsIntent2026!"
 
 SEED_USERS = (
     {
-        "first_name": "Ana",
-        "last_name": "Jovanović",
-        "username": "ana.jovanovic",
-        "email": "ana.jovanovic@dnsintent.test",
+        "first_name": "Andrej",
+        "last_name": "Vujic",
+        "username": "andrej.vujic",
+        "email": "andrejvujic021@gmail.com",
     },
     {
         "first_name": "Marko",

@@ -265,7 +265,18 @@ function RecordTypeSelect({ value, types, disabled, onChange }) {
   );
 }
 
-export default function DnsRecordForm({ mode, record, availableTypes = RECORD_TYPES, isSubmitting, onSubmit, onClose, onNotify }) {
+export default function DnsRecordForm({
+  mode,
+  record,
+  availableTypes = RECORD_TYPES,
+  isSubmitting,
+  onSubmit,
+  onClose,
+  onNotify,
+  kicker = 'DNS record',
+  title,
+  submitLabel,
+}) {
   const isEdit = mode === 'edit';
   const [type, setType] = useState(record?.type || '');
   const [values, setValues] = useState(() => initialValues(record?.type || '', record));
@@ -318,8 +329,8 @@ export default function DnsRecordForm({ mode, record, availableTypes = RECORD_TY
       <section className="record-modal" role="dialog" aria-modal="true" aria-labelledby="record-form-title">
         <header className="modal-header">
           <div>
-            <p className="modal-kicker">DNS record</p>
-            <h2 id="record-form-title">{isEdit ? `Edit ${type} record` : 'Add record'}</h2>
+            <p className="modal-kicker">{kicker}</p>
+            <h2 id="record-form-title">{title || (isEdit ? `Edit ${type} record` : 'Add record')}</h2>
           </div>
           <button className="modal-close" type="button" onClick={onClose} disabled={isSubmitting} aria-label="Close form">×</button>
         </header>
@@ -379,7 +390,7 @@ export default function DnsRecordForm({ mode, record, availableTypes = RECORD_TY
           <footer className="modal-actions">
             <button className="button-secondary" type="button" onClick={onClose} disabled={isSubmitting}>Cancel</button>
             <button className="button-primary" type="submit" disabled={isSubmitting}>
-              {isSubmitting ? 'Saving…' : isEdit ? 'Save changes' : 'Add record'}
+              {isSubmitting ? 'Saving…' : submitLabel || (isEdit ? 'Save changes' : 'Add record')}
             </button>
           </footer>
         </form>

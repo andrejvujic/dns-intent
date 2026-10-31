@@ -39,11 +39,11 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
     const start = new Date(notBefore);
     const end = new Date(validUntil);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      onNotify('error', 'Unesite ispravan vremenski period intenta.');
+      onNotify('error', 'Enter a valid intent time window.');
       return null;
     }
     if (end <= start) {
-      onNotify('error', 'Valid until mora biti poslije Not before vremena.');
+      onNotify('error', 'Valid until must be later than Not before.');
       return null;
     }
     return {
@@ -67,7 +67,7 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
       };
     } else {
       if (!selectedRecord) {
-        onNotify('error', 'Izaberite DNS zapis.');
+        onNotify('error', 'Select a DNS record.');
         return false;
       }
       intent = {
@@ -81,7 +81,7 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
 
     const safeDomain = domainName.replace(/[^a-z0-9.-]/gi, '_');
     downloadJson(`${safeDomain}-${operation.toLowerCase()}-intent.json`, intent);
-    onNotify('success', 'Intent JSON je generisan i preuzet. Potpišite ga lokalno.');
+    onNotify('success', 'The Intent JSON was generated and downloaded. Sign it locally.');
     return true;
   }
 
@@ -89,7 +89,7 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
     event.preventDefault();
     if (!timeFields()) return;
     if (operation !== 'ADD_RECORD' && !selectedRecord) {
-      onNotify('error', 'Izaberite DNS zapis.');
+      onNotify('error', 'Select a DNS record.');
       return;
     }
     if (operation === 'DELETE_RECORD') {
@@ -107,26 +107,26 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
     <section className="intent-generator">
       <div>
         <p className="policy-kicker">1. Prepare</p>
-        <h2>Generiši Intent JSON</h2>
-        <p className="commit-help">Izaberite operaciju i period važenja. Vrijeme se pri preuzimanju pretvara u UTC ISO format.</p>
+        <h2>Generate Intent JSON</h2>
+        <p className="commit-help">Choose an operation and validity window. Local times are converted to UTC ISO timestamps in the downloaded file.</p>
       </div>
       <form onSubmit={handleGenerate}>
         <label>
-          <span>Operacija</span>
+          <span>Operation</span>
           <select value={operation} onChange={(event) => {
             setOperation(event.target.value);
             setRecordId('');
           }}>
-            <option value="ADD_RECORD">Dodaj zapis</option>
-            <option value="UPDATE_RECORD">Izmijeni zapis</option>
-            <option value="DELETE_RECORD">Obriši zapis</option>
+            <option value="ADD_RECORD">Add record</option>
+            <option value="UPDATE_RECORD">Update record</option>
+            <option value="DELETE_RECORD">Delete record</option>
           </select>
         </label>
         {operation !== 'ADD_RECORD' && (
           <label>
-            <span>Zaštićeni DNS zapis</span>
+            <span>Protected DNS record</span>
             <select value={recordId} onChange={(event) => setRecordId(event.target.value)} required>
-              <option value="">Izaberite zapis</option>
+              <option value="">Select a record</option>
               {protectedRecords.map((record) => (
                 <option value={record.id} key={record.id}>
                   #{record.id} · {record.type} · {record.value.name}
@@ -145,7 +145,9 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
             <input type="datetime-local" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} required />
           </label>
         </div>
-        <button className="primary-button" type="submit">Unesi DNS podatke i preuzmi JSON</button>
+        <button className="primary-button" type="submit">
+          {operation === 'DELETE_RECORD' ? 'Download Intent JSON' : 'Continue to record details'}
+        </button>
       </form>
 
       {showRecordForm && (
@@ -157,6 +159,9 @@ export default function IntentGenerator({ domainName, records, protectedTypes, o
           onSubmit={handleRecordValue}
           onClose={() => setShowRecordForm(false)}
           onNotify={onNotify}
+          kicker="Intent builder"
+          title={operation === 'UPDATE_RECORD' ? `Define the new ${selectedRecord?.type || ''} record value` : 'Define the new DNS record'}
+          submitLabel="Download Intent JSON"
         />
       )}
     </section>

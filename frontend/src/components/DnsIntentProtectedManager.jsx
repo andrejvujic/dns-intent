@@ -8,7 +8,7 @@ function policyValue(value, fallback = 'Not configured') {
 }
 
 function formatDate(value) {
-  return new Intl.DateTimeFormat('sr-Latn-RS', {
+  return new Intl.DateTimeFormat('en-GB', {
     dateStyle: 'medium',
     timeStyle: 'medium',
   }).format(new Date(value));
@@ -55,7 +55,7 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
       });
       setHash('');
       setSignature('');
-      onNotify('success', 'Commit je zakazan i period čekanja je počeo.');
+      onNotify('success', 'The commit was scheduled and its hold period has started.');
       await loadCommits();
     } catch (error) {
       onNotify('error', error.message);
@@ -75,10 +75,10 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
       }
       setHash(commit.hash);
       setSignature(commit.signature);
-      onNotify('success', 'Hash i potpis su učitani iz signing bundle fajla.');
+      onNotify('success', 'The hash and signature were loaded from the signing bundle.');
     } catch {
       event.target.value = '';
-      onNotify('error', 'Signing bundle mora sadržati commit_request.hash i commit_request.signature.');
+      onNotify('error', 'The signing bundle must contain commit_request.hash and commit_request.signature.');
     }
   }
 
@@ -104,14 +104,14 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
       event.target.value = '';
       setIntent(null);
       setIntentFilename('');
-      onNotify('error', 'Izabrani Intent fajl nije validan JSON.');
+      onNotify('error', 'The selected Intent file is not valid JSON.');
     }
   }
 
   async function handleReveal(event) {
     event.preventDefault();
     if (!intent) {
-      onNotify('error', 'Izaberite originalni Intent JSON fajl.');
+      onNotify('error', 'Select the original Intent JSON file.');
       return;
     }
 
@@ -121,14 +121,14 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
         intent,
         nonce: nonce.trim(),
       });
-      onNotify('success', 'Commit je potvrđen i DNS promjena je primijenjena.');
+      onNotify('success', 'The commit was revealed and the DNS change was applied.');
       setRevealingId(null);
       setIntent(null);
       setIntentFilename('');
       setNonce('');
       await loadCommits();
       onApplied().catch((error) => {
-        onNotify('error', `Promjena je primijenjena, ali osvježavanje nije uspjelo: ${error.message}`);
+        onNotify('error', `The change was applied, but refreshing the domain failed: ${error.message}`);
       });
     } catch (error) {
       onNotify('error', error.message);
@@ -170,10 +170,10 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
         <form className="commit-form" onSubmit={handleSubmit}>
           <div>
             <p className="policy-kicker">2. Commit</p>
-            <h2>Zakaži potpisanu promjenu</h2>
+            <h2>Schedule a signed change</h2>
             <p className="commit-help">
-              Unesite Base64 SHA-256 hash i njegov Ed25519 potpis. Nonce ostaje na
-              klijentu i šalje se serveru tek kasnije, zajedno sa intentom, u reveal fazi.
+              Upload the signing bundle or enter its Base64 SHA-256 hash and Ed25519
+              signature. The nonce stays local until the reveal phase.
             </p>
           </div>
           <label htmlFor="signing-bundle">Signing bundle JSON</label>
@@ -183,13 +183,13 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
             accept="application/json,.json"
             onChange={loadSigningBundle}
           />
-          <p className="field-note">Možete učitati rezultat skripte ili ručno unijeti polja ispod.</p>
+          <p className="field-note">Upload the script output, or enter the two values manually below.</p>
           <label htmlFor="commit-hash">Commit hash</label>
           <input
             id="commit-hash"
             value={hash}
             onChange={(event) => setHash(event.target.value)}
-            placeholder="44 znaka, Base64"
+            placeholder="44-character Base64 value"
             minLength={44}
             maxLength={44}
             required
@@ -199,14 +199,14 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
             id="commit-signature"
             value={signature}
             onChange={(event) => setSignature(event.target.value)}
-            placeholder="88 znakova, Base64 Ed25519 potpis"
+            placeholder="88-character Base64 Ed25519 signature"
             minLength={88}
             maxLength={88}
             rows={3}
             required
           />
           <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? 'Zakazivanje…' : 'Zakaži commit'}
+            {isSubmitting ? 'Scheduling…' : 'Schedule commit'}
           </button>
         </form>
 
@@ -214,14 +214,14 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
           <div className="commit-list-heading">
             <div>
               <p className="policy-kicker">Timeline</p>
-              <h2>Zakazani commitovi</h2>
+              <h2>Scheduled commits</h2>
             </div>
-            <button type="button" onClick={loadCommits} disabled={isLoading}>Osvježi</button>
+            <button type="button" onClick={loadCommits} disabled={isLoading}>Refresh</button>
           </div>
           {isLoading ? (
-            <p className="commit-empty">Učitavanje…</p>
+            <p className="commit-empty">Loading…</p>
           ) : commits.length === 0 ? (
-            <p className="commit-empty">Još nema zakazanih commitova.</p>
+            <p className="commit-empty">No commits have been scheduled yet.</p>
           ) : (
             <div className="commit-list">
               {commits.map((commit) => (
@@ -234,8 +234,8 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
                   </div>
                   <code title={commit.hash}>{commit.hash}</code>
                   <dl>
-                    <div><dt>Kreiran</dt><dd>{formatDate(commit.received_at)}</dd></div>
-                    <div><dt>Spreman</dt><dd>{formatDate(commit.matures_at)}</dd></div>
+                    <div><dt>Created</dt><dd>{formatDate(commit.received_at)}</dd></div>
+                    <div><dt>Ready at</dt><dd>{formatDate(commit.matures_at)}</dd></div>
                   </dl>
                   {commit.status === 'READY' && revealingId !== commit.id && (
                     <button
@@ -243,13 +243,13 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
                       type="button"
                       onClick={() => openReveal(commit.id)}
                     >
-                      Reveal i primijeni
+                      Reveal and apply
                     </button>
                   )}
                   {revealingId === commit.id && (
                     <form className="reveal-form" onSubmit={handleReveal}>
                       <p className="reveal-step-label">3. Reveal</p>
-                      <label htmlFor={`intent-${commit.id}`}>Originalni Intent JSON fajl</label>
+                      <label htmlFor={`intent-${commit.id}`}>Original Intent JSON file</label>
                       <input
                         id={`intent-${commit.id}`}
                         type="file"
@@ -257,19 +257,19 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
                         onChange={loadIntentFile}
                         required
                       />
-                      {intentFilename && <small className="intent-file-name">Učitan: {intentFilename}</small>}
+                      {intentFilename && <small className="intent-file-name">Loaded: {intentFilename}</small>}
                       <label htmlFor={`nonce-${commit.id}`}>Nonce</label>
                       <input
                         id={`nonce-${commit.id}`}
                         value={nonce}
                         onChange={(event) => setNonce(event.target.value)}
-                        placeholder="Originalni Base64 nonce"
+                        placeholder="Original Base64 nonce"
                         required
                       />
                       <div className="reveal-actions">
-                        <button type="button" onClick={() => setRevealingId(null)}>Otkaži</button>
+                        <button type="button" onClick={() => setRevealingId(null)}>Cancel</button>
                         <button type="submit" disabled={isApplying}>
-                          {isApplying ? 'Primjena…' : 'Primijeni promjenu'}
+                          {isApplying ? 'Applying…' : 'Apply change'}
                         </button>
                       </div>
                     </form>

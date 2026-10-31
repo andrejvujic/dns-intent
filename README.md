@@ -1,6 +1,4 @@
-# Full-stack starter
-
-Minimalni monorepo za razvoj aplikacije sa FastAPI backendom i React/Vite frontendom.
+# DNS Intent
 
 ## Tehnologije
 
@@ -13,7 +11,7 @@ Potrebni su Python 3.10 ili noviji.
 
 ```bash
 cd backend
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
@@ -73,6 +71,3 @@ Frontend je dostupan na `http://localhost:5173`.
 │   └── vite.config.js
 └── README.md
 ```
-
-Projekat namerno ne sadrži poslovnu logiku, domenske modele, CRUD operacije ni
-autentifikaciju.

@@ -18,9 +18,15 @@ export default function IntentEnableForm({
   onNotify,
 }) {
   const [delay, setDelay] = useState('');
-  const [quorum, setQuorum] = useState('2');
+  const [quorum, setQuorum] = useState(() => String(Math.ceil(members.length / 2)));
   const [protectedOperations, setProtectedOperations] = useState(DEFAULT_PROTECTED_OPERATIONS);
   const firstInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!isLoadingMembers) {
+      setQuorum(String(Math.ceil(members.length / 2)));
+    }
+  }, [isLoadingMembers, members.length]);
 
   useEffect(() => {
     firstInputRef.current?.focus();
@@ -67,8 +73,8 @@ export default function IntentEnableForm({
       return;
     }
 
-    if (quorumValue <= members.length / 2) {
-      onNotify('error', `Panic quorum must be greater than half of the ${members.length} domain members.`);
+    if (quorumValue < Math.ceil(members.length / 2)) {
+      onNotify('error', `Panic quorum must be at least ${Math.ceil(members.length / 2)} for ${members.length} domain members.`);
       return;
     }
 

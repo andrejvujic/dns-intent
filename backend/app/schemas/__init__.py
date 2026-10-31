@@ -1,4 +1,5 @@
 from app.schemas.auth import LoginRequest, LoginResponse, UserResponse
+from app.schemas.commit import CommitCreate, CommitResponse
 from app.schemas.domain import (
     DomainDetailResponse,
     DomainMemberResponse,
@@ -14,6 +15,8 @@ from app.schemas.domain_record import (
 from app.schemas.intent import Intent
 
 __all__ = [
+    "CommitCreate",
+    "CommitResponse",
     "DomainDetailResponse",
     "DomainMemberResponse",
     "DomainRecordResponse",

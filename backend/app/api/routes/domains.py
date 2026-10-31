@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -6,8 +7,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.session import get_db
-from app.models import Domain, DomainRecord, DomainRecordType, User, UserDomain
+from app.models import (
+    Commit,
+    CommitStatus,
+    Domain,
+    DomainRecord,
+    DomainRecordType,
+    User,
+    UserDomain,
+)
 from app.schemas import (
+    CommitCreate,
+    CommitResponse,
     DomainDetailResponse,
     DomainMemberResponse,
     DomainRecordCreate,
@@ -17,7 +28,12 @@ from app.schemas import (
     IntentEnforcementCreate,
 )
 from app.schemas.domain_record import validate_record_value
-from app.services.crypto import CryptoInputError, validate_public_key
+from app.services.crypto import (
+    CryptoInputError,
+    decode_b64,
+    validate_public_key,
+    verify_signature,
+)
 
 
 router = APIRouter(prefix="/api/users/{user_id}/domains", tags=["domains"])
@@ -63,6 +79,40 @@ def get_authorized_domain(user_id: int, domain_id: int, session: Session) -> Dom
             detail="Domain not found or the user has no access to it.",
         )
     return domain
+
+
+def get_active_membership(
+    user_id: int, domain_id: int, session: Session
+) -> UserDomain:
+    membership = session.scalar(
+        select(UserDomain)
+        .join(User, User.id == UserDomain.user_id)
+        .where(
+            UserDomain.user_id == user_id,
+            UserDomain.domain_id == domain_id,
+            UserDomain.is_active.is_(True),
+            User.is_active.is_(True),
+        )
+    )
+    if membership is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Domain not found or the user has no access to it.",
+        )
+    return membership
+
+
+def commit_response(commit: Commit, user: User) -> CommitResponse:
+    return CommitResponse(
+        id=commit.id,
+        hash=commit.hash,
+        status=commit.status.value,
+        received_at=commit.received_at,
+        matures_at=commit.matures_at,
+        consumed_at=commit.consumed_at,
+        user_id=user.id,
+        username=user.username,
+    )
 
 
 def find_ie_record(domain_id: int, session: Session) -> DomainRecord | None:
@@ -325,6 +375,95 @@ def enable_dns_intent(
     session.commit()
     session.refresh(record)
     return to_record_response(record)
+
+
+@router.post(
+    "/{domain_id}/commits",
+    response_model=CommitResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def schedule_commit(
+    user_id: int,
+    domain_id: int,
+    payload: CommitCreate,
+    session: DbSession,
+) -> CommitResponse:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    membership = get_active_membership(user_id, domain_id, session)
+    ie_record = find_ie_record(domain.id, session)
+    if ie_record is None or membership.intent_public_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="DNS Intent is not enabled for this domain.",
+        )
+
+    try:
+        digest = decode_b64(payload.hash, field="hash", expected_length=32)
+        decode_b64(payload.signature, field="signature", expected_length=64)
+    except CryptoInputError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+
+    if not verify_signature(membership.intent_public_key, payload.signature, digest):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Signature is not valid for the signed-in user's Intent key.",
+        )
+    if session.scalar(select(Commit.id).where(Commit.hash == payload.hash)) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This commitment hash has already been scheduled.",
+        )
+
+    now = datetime.now(timezone.utc)
+    delay_seconds = int((ie_record.value or {}).get("delay_seconds", 0))
+    matures_at = now + timedelta(seconds=delay_seconds)
+    commit = Commit(
+        user_domain=membership,
+        hash=payload.hash,
+        signature=payload.signature,
+        status=CommitStatus.READY if delay_seconds == 0 else CommitStatus.HOLDING,
+        received_at=now,
+        matures_at=matures_at,
+    )
+    session.add(commit)
+    session.commit()
+    session.refresh(commit)
+    user = session.get(User, user_id)
+    return commit_response(commit, user)
+
+
+@router.get(
+    "/{domain_id}/commits",
+    response_model=list[CommitResponse],
+)
+def list_scheduled_commits(
+    user_id: int, domain_id: int, session: DbSession
+) -> list[CommitResponse]:
+    get_authorized_domain(user_id, domain_id, session)
+    now = datetime.now(timezone.utc)
+    rows = session.execute(
+        select(Commit, User)
+        .join(UserDomain, Commit.user_domain_id == UserDomain.id)
+        .join(User, User.id == UserDomain.user_id)
+        .where(UserDomain.domain_id == domain_id)
+        .order_by(Commit.received_at.desc())
+    ).all()
+
+    changed = False
+    for commit, _ in rows:
+        maturity = commit.matures_at
+        if maturity.tzinfo is None:
+            maturity = maturity.replace(tzinfo=timezone.utc)
+        if commit.status == CommitStatus.HOLDING and maturity <= now:
+            commit.status = CommitStatus.READY
+            changed = True
+    if changed:
+        session.commit()
+
+    return [commit_response(commit, user) for commit, user in rows]
 
 
 @router.patch(

@@ -1,6 +1,7 @@
 import base64
 import binascii
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 
@@ -24,3 +25,19 @@ def validate_public_key(value: str, *, field: str) -> None:
         Ed25519PublicKey.from_public_bytes(raw)
     except ValueError as exc:
         raise CryptoInputError(f"{field} is not a valid Ed25519 public key") from exc
+
+
+def verify_signature(public_key: str, signature: str, message: bytes) -> bool:
+    try:
+        key_bytes = decode_b64(
+            public_key, field="intent_public_key", expected_length=32
+        )
+        signature_bytes = decode_b64(
+            signature, field="signature", expected_length=64
+        )
+        Ed25519PublicKey.from_public_bytes(key_bytes).verify(
+            signature_bytes, message
+        )
+    except (CryptoInputError, InvalidSignature, ValueError):
+        return False
+    return True

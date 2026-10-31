@@ -17,6 +17,7 @@ from app.schemas import (
     IntentEnforcementCreate,
 )
 from app.schemas.domain_record import validate_record_value
+from app.services.crypto import CryptoInputError, validate_public_key
 
 
 router = APIRouter(prefix="/api/users/{user_id}/domains", tags=["domains"])
@@ -265,6 +266,42 @@ def enable_dns_intent(
 ) -> DomainRecordResponse:
     domain = get_authorized_domain(user_id, domain_id, session)
     ensure_intent_not_enabled(domain.id, session)
+
+    memberships = session.scalars(
+        select(UserDomain).where(
+            UserDomain.domain_id == domain.id,
+            UserDomain.is_active.is_(True),
+        )
+    ).all()
+    expected_ids = {membership.user_id for membership in memberships}
+    supplied_ids = [item.user_id for item in payload.public_keys]
+    if (
+        len(supplied_ids) != len(set(supplied_ids))
+        or set(supplied_ids) != expected_ids
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Public intent and panic keys are required for every active domain member.",
+        )
+    keys_by_user = {item.user_id: item for item in payload.public_keys}
+    try:
+        for membership in memberships:
+            keys = keys_by_user[membership.user_id]
+            validate_public_key(
+                keys.intent_public_key,
+                field=f"user {membership.user_id} intent_public_key",
+            )
+            validate_public_key(
+                keys.panic_public_key,
+                field=f"user {membership.user_id} panic_public_key",
+            )
+            membership.intent_public_key = keys.intent_public_key
+            membership.panic_public_key = keys.panic_public_key
+    except CryptoInputError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
 
     record_type = session.scalar(
         select(DomainRecordType).where(DomainRecordType.name == "IE")

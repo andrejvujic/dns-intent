@@ -31,3 +31,5 @@ class DomainMemberResponse(BaseModel):
     id: int
     first_name: str
     last_name: str
+    username: str
+    email: str

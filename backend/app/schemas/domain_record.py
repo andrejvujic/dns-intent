@@ -308,12 +308,21 @@ class DomainRecordUpdate(BaseModel):
     value: dict[str, Any]
 
 
+class MemberPublicKeys(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: int
+    intent_public_key: str
+    panic_public_key: str
+
+
 class IntentEnforcementCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     panic_quorum: int = Field(ge=1)
     delay_seconds: int = Field(ge=1800)
     protected_operations: list[str] = Field(min_length=1)
+    public_keys: list[MemberPublicKeys] = Field(min_length=1)
 
     @field_validator("protected_operations")
     @classmethod
@@ -339,6 +348,7 @@ __all__ = [
     "DomainRecordCreate",
     "DomainRecordUpdate",
     "IntentEnforcementCreate",
+    "MemberPublicKeys",
     "RECORD_VALUE_MODELS",
     "validate_record_value",
 ]

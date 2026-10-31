@@ -9,6 +9,7 @@ from app.schemas.domain_record import (
     DomainRecordCreate,
     DomainRecordUpdate,
     IntentEnforcementCreate,
+    MemberPublicKeys,
 )
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "DomainRecordUpdate",
     "DomainSummary",
     "IntentEnforcementCreate",
+    "MemberPublicKeys",
     "LoginRequest",
     "LoginResponse",
     "UserResponse",

@@ -20,7 +20,6 @@ export default function IntentEnableForm({
   const [delay, setDelay] = useState('');
   const [quorum, setQuorum] = useState('2');
   const [protectedOperations, setProtectedOperations] = useState(DEFAULT_PROTECTED_OPERATIONS);
-  const [keys, setKeys] = useState({});
   const firstInputRef = useRef(null);
 
   useEffect(() => {
@@ -53,22 +52,6 @@ export default function IntentEnableForm({
     ));
   }
 
-  function updateKey(memberId, field, value) {
-    setKeys((current) => ({
-      ...current,
-      [memberId]: { ...(current[memberId] || {}), [field]: value },
-    }));
-  }
-
-  function completeKeyPairs() {
-    return members.reduce((count, member) => {
-      const pair = keys[member.id] || {};
-      const hasIntent = String(pair.intent || '').trim() !== '';
-      const hasPanic = String(pair.panic || '').trim() !== '';
-      return hasIntent && hasPanic ? count + 1 : count;
-    }, 0);
-  }
-
   function handleSubmit(event) {
     event.preventDefault();
 
@@ -91,12 +74,6 @@ export default function IntentEnableForm({
 
     if (protectedOperations.length === 0) {
       onNotify('error', 'Select at least one protected record type.');
-      return;
-    }
-
-    const requiredPairs = quorumValue + 1;
-    if (completeKeyPairs() < requiredPairs) {
-      onNotify('error', `Enter at least ${requiredPairs} complete key pairs (quorum + 1).`);
       return;
     }
 
@@ -189,9 +166,9 @@ export default function IntentEnableForm({
           </div>
 
           <div className="intent-form-section">
-            <span className="form-field-label">Domain members and public keys</span>
+            <span className="form-field-label">Automatic key generation</span>
             <p className="form-hint">
-              Enter the intent and panic public keys for at least <strong>quorum + 1</strong> members to enable protection.
+              Enabling protection generates an Ed25519 intent and panic key pair for every domain member. Only public keys are sent to the server. A JSON file containing the private keys will download automatically.
             </p>
 
             {isLoadingMembers ? (
@@ -201,30 +178,10 @@ export default function IntentEnableForm({
             ) : (
               <div className="member-list">
                 {members.map((member) => {
-                  const pair = keys[member.id] || {};
                   return (
                     <div className="member-row" key={member.id}>
                       <span className="member-name">{memberName(member)}</span>
-                      <label className="member-key">
-                        <span>Public intent key</span>
-                        <input
-                          type="text"
-                          value={pair.intent || ''}
-                          onChange={(event) => updateKey(member.id, 'intent', event.target.value)}
-                          disabled={isSubmitting}
-                          placeholder="Base64 public key"
-                        />
-                      </label>
-                      <label className="member-key">
-                        <span>Public panic key</span>
-                        <input
-                          type="text"
-                          value={pair.panic || ''}
-                          onChange={(event) => updateKey(member.id, 'panic', event.target.value)}
-                          disabled={isSubmitting}
-                          placeholder="Base64 public key"
-                        />
-                      </label>
+                      <span className="form-hint">Intent + panic key pair</span>
                     </div>
                   );
                 })}

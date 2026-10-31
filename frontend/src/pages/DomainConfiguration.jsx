@@ -11,6 +11,11 @@ import DirectDnsRecordManager from '../components/DirectDnsRecordManager.jsx';
 import DnsIntentProtectedManager from '../components/DnsIntentProtectedManager.jsx';
 import IntentEnableForm from '../components/IntentEnableForm.jsx';
 import { recordContent, recordName } from '../components/DnsRecordTable.jsx';
+import {
+  downloadPrivateKeys,
+  generateDomainKeys,
+  publicKeysPayload,
+} from '../crypto/keys.js';
 
 export default function DomainConfiguration({
   userId,
@@ -113,8 +118,13 @@ export default function DomainConfiguration({
     setIsSubmittingIntent(true);
 
     try {
-      await enableDnsIntent(userId, domain.id, payload);
-      onNotify('success', 'DNS Intent protection was enabled.');
+      const keyFile = await generateDomainKeys(domain, members);
+      await enableDnsIntent(userId, domain.id, {
+        ...payload,
+        public_keys: publicKeysPayload(keyFile),
+      });
+      downloadPrivateKeys(keyFile);
+      onNotify('success', 'DNS Intent was enabled. The private-key file was downloaded; store it securely.');
       setIsEnablingIntent(false);
       onReloadDomain().catch((reloadError) => {
         onNotify('error', `Protection was enabled, but refresh failed: ${reloadError.message}`);

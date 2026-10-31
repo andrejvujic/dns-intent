@@ -60,6 +60,10 @@ uvicorn app.main:app --reload
 - Health endpoint: `http://localhost:8000/api/health`
 - Environment variables are listed in `backend/.env.example` (optional; defaults work locally).
 
+Enabling DNS Intent generates an Ed25519 intent and panic key pair for every active
+domain member in the browser. Public keys are stored by the backend; private keys
+are downloaded as an organized JSON file and never uploaded.
+
 ## Running the frontend
 
 Requires Node.js 20.19+ or 22.12+.

@@ -56,8 +56,8 @@ export default function IntentEnableForm({
     event.preventDefault();
 
     const delayValue = Number(delay);
-    if (!Number.isInteger(delayValue) || delayValue < 1800) {
-      onNotify('error', 'Minimal delay must be at least 1800 seconds (30 minutes).');
+    if (!Number.isInteger(delayValue) || delayValue < 30) {
+      onNotify('error', 'Minimal delay must be at least 30 seconds.');
       return;
     }
 
@@ -108,12 +108,12 @@ export default function IntentEnableForm({
               <input
                 ref={firstInputRef}
                 type="number"
-                min="0"
+                min="30"
                 step="1"
                 value={delay}
                 onChange={(event) => setDelay(event.target.value)}
                 disabled={isSubmitting}
-                placeholder="e.g. 3600"
+                placeholder="e.g. 30"
                 required
               />
             </label>

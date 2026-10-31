@@ -75,6 +75,14 @@ export function getScheduledCommits(userId, domainId) {
   return requestJson(`/api/users/${userId}/domains/${domainId}/commits`);
 }
 
+export function revealCommit(userId, domainId, commitId, payload) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/commits/${commitId}/reveal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
 export function createDomainRecord(userId, domainId, payload) {
   return requestJson(`/api/users/${userId}/domains/${domainId}/records`, {
     method: 'POST',

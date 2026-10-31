@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { getScheduledCommits, scheduleCommit } from '../api/domains.js';
+import { getScheduledCommits, revealCommit, scheduleCommit } from '../api/domains.js';
 
 function policyValue(value, fallback = 'Not configured') {
   return value === undefined || value === null || value === '' ? fallback : value;
@@ -13,13 +13,17 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
-export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, onNotify }) {
+export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, onNotify, onApplied }) {
   const policy = ieRecord.value || {};
   const [hash, setHash] = useState('');
   const [signature, setSignature] = useState('');
   const [commits, setCommits] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [revealingId, setRevealingId] = useState(null);
+  const [intentJson, setIntentJson] = useState('');
+  const [nonce, setNonce] = useState('');
+  const [isApplying, setIsApplying] = useState(false);
   const operations = Array.isArray(policy.protected_operations)
     ? policy.protected_operations.join(', ')
     : policyValue(policy.protected_operations);
@@ -55,6 +59,43 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
       onNotify('error', error.message);
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  function openReveal(commitId) {
+    setRevealingId(commitId);
+    setIntentJson('');
+    setNonce('');
+  }
+
+  async function handleReveal(event) {
+    event.preventDefault();
+    let intent;
+    try {
+      intent = JSON.parse(intentJson);
+    } catch {
+      onNotify('error', 'Intent mora biti validan JSON.');
+      return;
+    }
+
+    setIsApplying(true);
+    try {
+      await revealCommit(userId, domainId, revealingId, {
+        intent,
+        nonce: nonce.trim(),
+      });
+      onNotify('success', 'Commit je potvrđen i DNS promjena je primijenjena.');
+      setRevealingId(null);
+      setIntentJson('');
+      setNonce('');
+      await loadCommits();
+      onApplied().catch((error) => {
+        onNotify('error', `Promjena je primijenjena, ali osvježavanje nije uspjelo: ${error.message}`);
+      });
+    } catch (error) {
+      onNotify('error', error.message);
+    } finally {
+      setIsApplying(false);
     }
   }
 
@@ -143,6 +184,42 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
                     <div><dt>Kreiran</dt><dd>{formatDate(commit.received_at)}</dd></div>
                     <div><dt>Spreman</dt><dd>{formatDate(commit.matures_at)}</dd></div>
                   </dl>
+                  {commit.status === 'READY' && revealingId !== commit.id && (
+                    <button
+                      className="commit-reveal-button"
+                      type="button"
+                      onClick={() => openReveal(commit.id)}
+                    >
+                      Reveal i primijeni
+                    </button>
+                  )}
+                  {revealingId === commit.id && (
+                    <form className="reveal-form" onSubmit={handleReveal}>
+                      <label htmlFor={`intent-${commit.id}`}>Intent JSON</label>
+                      <textarea
+                        id={`intent-${commit.id}`}
+                        rows={8}
+                        value={intentJson}
+                        onChange={(event) => setIntentJson(event.target.value)}
+                        placeholder={'{\n  "domain": "example.test",\n  "operation": "ADD_RECORD",\n  ...\n}'}
+                        required
+                      />
+                      <label htmlFor={`nonce-${commit.id}`}>Nonce</label>
+                      <input
+                        id={`nonce-${commit.id}`}
+                        value={nonce}
+                        onChange={(event) => setNonce(event.target.value)}
+                        placeholder="Originalni Base64 nonce"
+                        required
+                      />
+                      <div className="reveal-actions">
+                        <button type="button" onClick={() => setRevealingId(null)}>Otkaži</button>
+                        <button type="submit" disabled={isApplying}>
+                          {isApplying ? 'Primjena…' : 'Primijeni promjenu'}
+                        </button>
+                      </div>
+                    </form>
+                  )}
                 </article>
               ))}
             </div>

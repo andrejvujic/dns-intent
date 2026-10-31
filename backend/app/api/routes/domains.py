@@ -1,3 +1,4 @@
+import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -17,17 +18,21 @@ from app.models import (
     UserDomain,
 )
 from app.schemas import (
+    CommitApplyResponse,
     CommitCreate,
     CommitResponse,
+    CommitReveal,
     DomainDetailResponse,
     DomainMemberResponse,
     DomainRecordCreate,
     DomainRecordResponse,
     DomainRecordUpdate,
     DomainSummary,
+    Intent,
     IntentEnforcementCreate,
 )
 from app.schemas.domain_record import validate_record_value
+from app.services.canonical import commitment_hash
 from app.services.crypto import (
     CryptoInputError,
     decode_b64,
@@ -464,6 +469,157 @@ def list_scheduled_commits(
         session.commit()
 
     return [commit_response(commit, user) for commit, user in rows]
+
+
+@router.post(
+    "/{domain_id}/commits/{commit_id}/reveal",
+    response_model=CommitApplyResponse,
+)
+def reveal_and_apply_commit(
+    user_id: int,
+    domain_id: int,
+    commit_id: int,
+    payload: CommitReveal,
+    session: DbSession,
+) -> CommitApplyResponse:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    commit = session.scalar(
+        select(Commit)
+        .join(UserDomain, Commit.user_domain_id == UserDomain.id)
+        .where(Commit.id == commit_id, UserDomain.domain_id == domain.id)
+        .options(
+            selectinload(Commit.user_domain).joinedload(UserDomain.user)
+        )
+    )
+    if commit is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scheduled commit was not found.",
+        )
+    if commit.status == CommitStatus.CONSUMED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This commit has already been applied.",
+        )
+
+    now = datetime.now(timezone.utc)
+    matures_at = commit.matures_at
+    if matures_at.tzinfo is None:
+        matures_at = matures_at.replace(tzinfo=timezone.utc)
+    if now < matures_at:
+        raise HTTPException(
+            status_code=status.HTTP_425_TOO_EARLY,
+            detail=f"The hold period ends at {matures_at.isoformat()}.",
+        )
+    if payload.intent.domain != domain.name.lower().rstrip("."):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Intent domain does not match this domain.",
+        )
+    not_before = payload.intent.not_before.astimezone(timezone.utc)
+    valid_until = payload.intent.valid_until.astimezone(timezone.utc)
+    if now < not_before:
+        raise HTTPException(
+            status_code=status.HTTP_425_TOO_EARLY,
+            detail=(
+                "The intent is not active yet: "
+                f"current UTC time is {now.isoformat()}, "
+                f"not_before is {not_before.isoformat()}."
+            ),
+        )
+    if now > valid_until:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="The intent has expired.",
+        )
+
+    try:
+        nonce = decode_b64(payload.nonce, field="nonce")
+    except CryptoInputError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    if len(nonce) < 16:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="nonce must decode to at least 16 bytes",
+        )
+
+    intent_data = payload.intent.model_dump(mode="json", exclude_none=True)
+    calculated_hash = commitment_hash(intent_data, nonce)
+    stored_hash = decode_b64(commit.hash, field="stored hash", expected_length=32)
+    if not hmac.compare_digest(calculated_hash, stored_hash):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Intent and nonce do not match the scheduled commit hash.",
+        )
+
+    record_id = apply_intent(domain, payload.intent, session)
+    commit.status = CommitStatus.CONSUMED
+    commit.consumed_at = now
+    session.commit()
+    session.refresh(commit)
+    return CommitApplyResponse(
+        status="applied",
+        commit=commit_response(commit, commit.user_domain.user),
+        record_id=record_id,
+    )
+
+
+def apply_intent(domain: Domain, intent: Intent, session: Session) -> int | None:
+    operation = intent.operation
+    if operation == "ADD_RECORD":
+        if intent.record_type not in get_protected_operations(domain.id, session):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This record type is not protected; use the regular DNS endpoint.",
+            )
+        record_type = session.scalar(
+            select(DomainRecordType).where(DomainRecordType.name == intent.record_type)
+        )
+        if record_type is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Unsupported DNS record type: {intent.record_type}",
+            )
+        value = validated_value(record_type.name, intent.value)
+        ensure_record_is_unique(session, domain.id, record_type.id, value)
+        record = DomainRecord(domain=domain, record_type=record_type, value=value)
+        session.add(record)
+        session.flush()
+        return record.id
+
+    record = session.scalar(
+        select(DomainRecord)
+        .where(DomainRecord.id == intent.record_id, DomainRecord.domain_id == domain.id)
+        .options(selectinload(DomainRecord.record_type))
+    )
+    if record is None or record.record_type.name == "IE":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="DNS record from the intent was not found.",
+        )
+    if record.record_type.name not in get_protected_operations(domain.id, session):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This record type is not protected; use the regular DNS endpoint.",
+        )
+
+    if operation == "UPDATE_RECORD":
+        value = validated_value(record.record_type.name, intent.value)
+        ensure_record_is_unique(
+            session,
+            domain.id,
+            record.domain_record_type_id,
+            value,
+            exclude_record_id=record.id,
+        )
+        record.value = value
+        return record.id
+
+    session.delete(record)
+    return None
 
 
 @router.patch(

@@ -320,7 +320,7 @@ class IntentEnforcementCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     panic_quorum: int = Field(ge=1)
-    delay_seconds: int = Field(ge=1800)
+    delay_seconds: int = Field(ge=30)
     protected_operations: list[str] = Field(min_length=1)
     public_keys: list[MemberPublicKeys] = Field(min_length=1)
 

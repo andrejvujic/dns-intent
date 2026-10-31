@@ -75,6 +75,11 @@ the commit; the same nonce is sent only with the intent during the later reveal
 phase, allowing the server to reproduce the hash without exposing the intended
 change during the hold period.
 
+After the hold period, applying a commit requires both the original Intent JSON
+and that same Base64 nonce. The reveal endpoint recalculates the commitment,
+checks the intent validity window and domain, applies the protected add/update/
+delete operation, and marks the commit `CONSUMED` to prevent replay.
+
 ## Running the frontend
 
 Requires Node.js 20.19+ or 22.12+.

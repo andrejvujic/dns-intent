@@ -171,6 +171,7 @@ export default function DomainConfiguration({
           userId={userId}
           domainId={domain.id}
           onNotify={onNotify}
+          onApplied={onReloadDomain}
         />
       )}
 

@@ -886,6 +886,68 @@ select {
   font-size: 0.73rem;
 }
 
+.commit-reveal-button {
+  width: 100%;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  color: #f6fff9;
+  background: #246b50;
+  font-size: 0.76rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.reveal-form {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e1e8e4;
+}
+
+.reveal-form label {
+  display: block;
+  margin: 10px 0 6px;
+  color: #46564f;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.reveal-form textarea,
+.reveal-form input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #cfdad4;
+  border-radius: 8px;
+  background: #fff;
+  font: 0.72rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
+
+.reveal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.reveal-actions button {
+  padding: 8px 11px;
+  border: 1px solid #cdd8d2;
+  border-radius: 7px;
+  color: #385449;
+  background: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.reveal-actions button[type="submit"] {
+  color: #fff;
+  border-color: #184f40;
+  background: #184f40;
+}
+
 .commit-empty {
   padding: 32px 0;
   color: #7b8782;

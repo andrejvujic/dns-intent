@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.intent import Intent
+
 
 class CommitCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -19,4 +21,17 @@ class CommitResponse(BaseModel):
     consumed_at: datetime | None
     user_id: int
     username: str
+
+
+class CommitReveal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intent: Intent
+    nonce: str = Field(min_length=24)
+
+
+class CommitApplyResponse(BaseModel):
+    status: str
+    commit: CommitResponse
+    record_id: int | None = None
 

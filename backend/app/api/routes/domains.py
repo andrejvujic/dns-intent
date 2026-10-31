@@ -1,12 +1,20 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from app.db.session import get_db
-from app.models import Domain, DomainRecord, UserDomain
-from app.schemas import DomainDetailResponse, DomainRecordResponse, DomainSummary
+from app.models import Domain, DomainRecord, DomainRecordType, User, UserDomain
+from app.schemas import (
+    DomainDetailResponse,
+    DomainRecordCreate,
+    DomainRecordResponse,
+    DomainRecordUpdate,
+    DomainSummary,
+)
+from app.schemas.domain_record import validate_record_value
 
 
 router = APIRouter(prefix="/api/users/{user_id}/domains", tags=["domains"])
@@ -22,6 +30,94 @@ def to_summary(domain: Domain) -> DomainSummary:
         record_count=len(domain.records),
         updated_at=domain.updated_at,
     )
+
+
+def to_record_response(record: DomainRecord) -> DomainRecordResponse:
+    return DomainRecordResponse(
+        id=record.id,
+        type=record.record_type.name,
+        value=record.value,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+def get_authorized_domain(user_id: int, domain_id: int, session: Session) -> Domain:
+    domain = session.scalar(
+        select(Domain)
+        .join(UserDomain)
+        .join(User, User.id == UserDomain.user_id)
+        .where(
+            Domain.id == domain_id,
+            UserDomain.user_id == user_id,
+            UserDomain.is_active.is_(True),
+            User.is_active.is_(True),
+        )
+    )
+    if domain is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Domen nije pronađen ili korisnik nema pristup domenu.",
+        )
+    return domain
+
+
+def ensure_dns_intent_disabled(domain_id: int, session: Session) -> None:
+    ie_record_id = session.scalar(
+        select(DomainRecord.id)
+        .join(DomainRecordType)
+        .where(
+            DomainRecord.domain_id == domain_id,
+            DomainRecordType.name == "IE",
+        )
+        .limit(1)
+    )
+    if ie_record_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "DNS Intent je uključen za ovaj domen. Koristite zaštićeni "
+                "commit/reveal ili panic tok."
+            ),
+        )
+
+
+def validated_value(record_type: str, value: dict) -> dict:
+    try:
+        return validate_record_value(record_type, value)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=exc.errors(include_url=False),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+
+
+def ensure_record_is_unique(
+    session: Session,
+    domain_id: int,
+    record_type_id: int,
+    value: dict,
+    *,
+    exclude_record_id: int | None = None,
+) -> None:
+    records = session.scalars(
+        select(DomainRecord).where(
+            DomainRecord.domain_id == domain_id,
+            DomainRecord.domain_record_type_id == record_type_id,
+        )
+    ).all()
+    if any(
+        record.id != exclude_record_id and record.value == value for record in records
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Identičan DNS record već postoji.",
+        )
 
 
 @router.get("", response_model=list[DomainSummary])
@@ -64,15 +160,120 @@ def get_user_domain(
     return DomainDetailResponse(
         **summary.model_dump(),
         records=[
-            DomainRecordResponse(
-                id=record.id,
-                type=record.record_type.name,
-                value=record.value,
-                created_at=record.created_at,
-                updated_at=record.updated_at,
-            )
+            to_record_response(record)
             for record in sorted(
                 domain.records, key=lambda item: (item.record_type.name, item.id)
             )
         ],
     )
+
+
+@router.post(
+    "/{domain_id}/records",
+    response_model=DomainRecordResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_domain_record(
+    user_id: int,
+    domain_id: int,
+    payload: DomainRecordCreate,
+    session: DbSession,
+) -> DomainRecordResponse:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    ensure_dns_intent_disabled(domain.id, session)
+
+    if payload.type == "IE":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="IE se ne može kreirati kroz obični DNS record endpoint.",
+        )
+
+    record_type = session.scalar(
+        select(DomainRecordType).where(DomainRecordType.name == payload.type)
+    )
+    if record_type is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Nepodržan DNS record tip: {payload.type}",
+        )
+
+    value = validated_value(record_type.name, payload.value)
+    ensure_record_is_unique(session, domain.id, record_type.id, value)
+
+    record = DomainRecord(domain=domain, record_type=record_type, value=value)
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return to_record_response(record)
+
+
+@router.patch(
+    "/{domain_id}/records/{record_id}",
+    response_model=DomainRecordResponse,
+)
+def update_domain_record(
+    user_id: int,
+    domain_id: int,
+    record_id: int,
+    payload: DomainRecordUpdate,
+    session: DbSession,
+) -> DomainRecordResponse:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    ensure_dns_intent_disabled(domain.id, session)
+
+    record = session.scalar(
+        select(DomainRecord)
+        .where(DomainRecord.id == record_id, DomainRecord.domain_id == domain.id)
+        .options(selectinload(DomainRecord.record_type))
+    )
+    if record is None or record.record_type.name == "IE":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="DNS record nije pronađen.",
+        )
+
+    value = validated_value(record.record_type.name, payload.value)
+    ensure_record_is_unique(
+        session,
+        domain.id,
+        record.domain_record_type_id,
+        value,
+        exclude_record_id=record.id,
+    )
+    record.value = value
+    session.commit()
+    session.refresh(record)
+    return to_record_response(record)
+
+
+@router.delete(
+    "/{domain_id}/records/{record_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_domain_record(
+    user_id: int,
+    domain_id: int,
+    record_id: int,
+    session: DbSession,
+) -> Response:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    ensure_dns_intent_disabled(domain.id, session)
+
+    record = session.scalar(
+        select(DomainRecord)
+        .join(DomainRecordType)
+        .where(
+            DomainRecord.id == record_id,
+            DomainRecord.domain_id == domain.id,
+            DomainRecordType.name != "IE",
+        )
+    )
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="DNS record nije pronađen.",
+        )
+
+    session.delete(record)
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

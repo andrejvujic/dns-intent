@@ -513,7 +513,6 @@ def schedule_commit(
             UserDomain.domain_id == domain.id,
             UserDomain.is_active.is_(True),
             User.is_active.is_(True),
-            User.id != user_id,
         )
         .order_by(User.id)
     ).all()
@@ -695,7 +694,6 @@ def create_panic_change(
             UserDomain.domain_id == domain.id,
             UserDomain.is_active.is_(True),
             User.is_active.is_(True),
-            User.id != user_id,
         )
         .order_by(User.id)
     ).all()

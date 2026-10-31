@@ -13,6 +13,7 @@ from app.core.config import settings
 
 
 logger = logging.getLogger(__name__)
+NON_DELIVERABLE_DOMAINS = (".test", ".invalid", ".localhost")
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,26 @@ class PanicChangeEmail:
     required_quorum: int
     expires_at: datetime
     applied_immediately: bool = False
+
+
+def _deliverable_recipients(
+    recipients: list[EmailRecipient], notification_name: str
+) -> list[EmailRecipient]:
+    deliverable: list[EmailRecipient] = []
+    for recipient in recipients:
+        address = recipient.email.strip()
+        domain = address.rpartition("@")[2].lower()
+        if not domain or domain.endswith(NON_DELIVERABLE_DOMAINS):
+            logger.warning(
+                "Cannot send %s email to %s: the address is not deliverable.",
+                notification_name,
+                recipient.email,
+            )
+            continue
+        deliverable.append(
+            EmailRecipient(email=address, first_name=recipient.first_name)
+        )
+    return deliverable
 
 
 def _format_utc(value: datetime) -> str:
@@ -127,16 +148,16 @@ def _build_panic_message(
     operation = escape(notification.operation.replace("_", " ").title())
     expires_at = _format_utc(notification.expires_at)
     applied = notification.applied_immediately
-    state_title = "Panic change applied" if applied else "Panic vote required"
+    state_title = "Panic change applied" if applied else "Panic request created"
     headline = (
         "An emergency DNS change was applied"
         if applied
-        else "An emergency DNS change needs your vote"
+        else "An emergency DNS change was requested"
     )
     explanation = (
         "The request author's vote satisfied the configured quorum, so the change was applied immediately."
         if applied
-        else "Review the exact change in DNS Intent, sign its JSON with your panic key, and cast your vote before it expires."
+        else "The request is now pending. Eligible domain members can review the exact change and vote before it expires."
     )
     message = EmailMessage()
     message["Subject"] = f"[DNS Intent] {state_title} for {notification.domain_name}"
@@ -194,6 +215,7 @@ def send_scheduled_intent_email(
     recipients: list[EmailRecipient], notification: ScheduledIntentEmail
 ) -> None:
     """Send one personalized message per recipient without exposing addresses."""
+    recipients = _deliverable_recipients(recipients, "scheduled-intent")
     if not recipients:
         return
     if not settings.smtp_configured:
@@ -214,6 +236,9 @@ def send_scheduled_intent_email(
             for recipient in recipients:
                 try:
                     smtp.send_message(_build_message(recipient, notification))
+                    logger.info(
+                        "Scheduled-intent email was accepted for %s.", recipient.email
+                    )
                 except (OSError, smtplib.SMTPException):
                     logger.exception(
                         "Could not send scheduled-intent email to %s.", recipient.email
@@ -229,6 +254,7 @@ def send_panic_change_email(
     recipients: list[EmailRecipient], notification: PanicChangeEmail
 ) -> None:
     """Send a personalized panic-change message through the shared SMTP setup."""
+    recipients = _deliverable_recipients(recipients, "panic-request")
     if not recipients:
         return
     if not settings.smtp_configured:
@@ -248,6 +274,9 @@ def send_panic_change_email(
             for recipient in recipients:
                 try:
                     smtp.send_message(_build_panic_message(recipient, notification))
+                    logger.info(
+                        "Panic-request email was accepted for %s.", recipient.email
+                    )
                 except (OSError, smtplib.SMTPException):
                     logger.exception("Could not send panic-change email to %s.", recipient.email)
     except (OSError, smtplib.SMTPException):

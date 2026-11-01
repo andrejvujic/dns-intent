@@ -8,8 +8,10 @@ from sqlalchemy.orm import Session
 from app.api.routes.auth import register
 from app.api.routes.domains import (
     create_domain_record,
+    delete_domain_record,
     get_domain_team,
     list_domain_members,
+    update_domain_record,
     vote_on_membership_request,
 )
 from app.db.base import Base
@@ -21,7 +23,7 @@ from app.models import (
     User,
     UserDomain,
 )
-from app.schemas import DomainRecordCreate, MembershipVoteCreate, RegisterRequest
+from app.schemas import DomainRecordCreate, DomainRecordUpdate, MembershipVoteCreate, RegisterRequest
 
 
 STRONG_PASSWORD = "Sigurna#Lozinka7"
@@ -163,6 +165,32 @@ class MembershipFlowTests(TestCase):
         with self.assertRaises(HTTPException) as raised:
             create_domain_record(applicant.id, self.domain.id, payload, self.session)
         self.assertEqual(raised.exception.status_code, 403)
+
+    def test_pending_user_cannot_update_or_delete_on_protected_domain(self) -> None:
+        applicant = self.register_applicant()
+        record = DomainRecord(domain=self.domain, record_type=self.types["A"], value={
+            "name": "www", "address": "192.0.2.20", "ttl": 3600,
+        })
+        self.session.add(record)
+        self.session.add(DomainRecord(domain=self.domain, record_type=self.types["IE"], value={
+            "name": "@", "ttl": 3600, "panic_quorum": 3, "delay_seconds": 1800,
+            "protected_operations": ["NS"],
+        }))
+        self.session.commit()
+
+        with self.assertRaises(HTTPException) as updated:
+            update_domain_record(
+                applicant.id, self.domain.id, record.id,
+                DomainRecordUpdate(value={"name": "www", "address": "192.0.2.99", "ttl": 3600}),
+                self.session,
+            )
+        self.assertEqual(updated.exception.status_code, 403)
+
+        with self.assertRaises(HTTPException) as deleted:
+            delete_domain_record(applicant.id, self.domain.id, record.id, self.session)
+        self.assertEqual(deleted.exception.status_code, 403)
+        self.session.refresh(record)
+        self.assertEqual(record.value["address"], "192.0.2.20")
 
     def test_duplicate_email_is_rejected(self) -> None:
         self.register_applicant()

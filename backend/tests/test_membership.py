@@ -1,4 +1,7 @@
+import base64
 from unittest import TestCase
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from fastapi import BackgroundTasks, HTTPException
 from pydantic import ValidationError
@@ -10,6 +13,7 @@ from app.api.routes.domains import (
     create_domain,
     create_domain_record,
     delete_domain_record,
+    enable_dns_intent,
     get_domain_team,
     invite_to_domain,
     list_domain_members,
@@ -35,6 +39,7 @@ from app.schemas import (
     MembershipVoteCreate,
     RegisterRequest,
 )
+from app.schemas.domain_record import IntentEnforcementCreate
 
 
 STRONG_PASSWORD = "Sigurna#Lozinka7"
@@ -154,6 +159,57 @@ class MembershipFlowTests(TestCase):
         pera = self.register_user()
         self.assertEqual(list_user_domains(pera.id, self.session), [])
         self.assertIsNone(self.status_of(pera))
+
+    def intent_payload(self, quorum: int) -> IntentEnforcementCreate:
+        public_key = base64.b64encode(
+            Ed25519PrivateKey.generate().public_key().public_bytes_raw()
+        ).decode()
+        return IntentEnforcementCreate(
+            panic_quorum=quorum,
+            delay_seconds=30,
+            protected_operations=["NS"],
+            public_keys=[
+                {"user_id": user.id, "intent_public_key": public_key, "panic_public_key": public_key}
+                for user in self.members
+            ],
+        )
+
+    def test_intent_accepts_quorum_one_below_member_count(self) -> None:
+        record = enable_dns_intent(
+            self.members[0].id, self.domain.id, self.intent_payload(4), self.session,
+        )
+        self.assertEqual(record.value["panic_quorum"], 4)
+
+    def test_intent_rejects_quorum_at_or_above_member_count(self) -> None:
+        for quorum in (5, 6, 100):
+            with self.subTest(quorum=quorum), self.assertRaises(HTTPException) as raised:
+                enable_dns_intent(
+                    self.members[0].id, self.domain.id, self.intent_payload(quorum), self.session,
+                )
+            self.assertEqual(raised.exception.status_code, 422)
+            self.assertIn("at most 4", raised.exception.detail)
+
+    def test_intent_quorum_counts_only_active_accepted_members(self) -> None:
+        self.domain.user_memberships[3].membership_status = MembershipStatus.PENDING
+        self.domain.user_memberships[4].is_active = False
+        self.session.commit()
+        with self.assertRaises(HTTPException) as raised:
+            enable_dns_intent(
+                self.members[0].id, self.domain.id, self.intent_payload(3), self.session,
+            )
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("at most 2 for 3", raised.exception.detail)
+
+    def test_intent_requires_at_least_two_members(self) -> None:
+        for membership in self.domain.user_memberships[1:]:
+            membership.is_active = False
+        self.session.commit()
+        with self.assertRaises(HTTPException) as raised:
+            enable_dns_intent(
+                self.members[0].id, self.domain.id, self.intent_payload(1), self.session,
+            )
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("At least two", raised.exception.detail)
 
     def test_new_user_is_listed_as_candidate_until_invited(self) -> None:
         pera = self.register_user()

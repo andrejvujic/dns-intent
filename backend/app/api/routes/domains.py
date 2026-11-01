@@ -535,6 +535,17 @@ def enable_dns_intent(
     ensure_intent_not_enabled(domain.id, session)
 
     memberships = accepted_memberships(domain.id, session)
+    max_quorum = len(memberships) - 1
+    if max_quorum < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="At least two active domain members are required to enable DNS Intent.",
+        )
+    if payload.panic_quorum > max_quorum:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Panic quorum must be at most {max_quorum} for {len(memberships)} domain members.",
+        )
     expected_ids = {membership.user_id for membership in memberships}
     supplied_ids = [item.user_id for item in payload.public_keys]
     if (

@@ -22,6 +22,7 @@ export default function IntentEnableForm({
   const [quorum, setQuorum] = useState(() => String(Math.ceil(members.length / 2)));
   const [protectedOperations, setProtectedOperations] = useState(DEFAULT_PROTECTED_OPERATIONS);
   const firstInputRef = useRef(null);
+  const maxQuorum = members.length - 1;
 
   useEffect(() => {
     if (!isLoadingMembers) {
@@ -69,6 +70,10 @@ export default function IntentEnableForm({
     }
 
     const quorumValue = Number(quorum);
+    if (maxQuorum < 1) {
+      onNotify('error', 'At least two active domain members are required to enable DNS Intent.');
+      return;
+    }
     if (!Number.isInteger(quorumValue) || quorumValue < 1) {
       onNotify('error', 'Panic quorum must be a whole number of at least 1.');
       return;
@@ -76,6 +81,11 @@ export default function IntentEnableForm({
 
     if (quorumValue < Math.ceil(members.length / 2)) {
       onNotify('error', `Panic quorum must be at least ${Math.ceil(members.length / 2)} for ${members.length} domain members.`);
+      return;
+    }
+
+    if (quorumValue > maxQuorum) {
+      onNotify('error', `Panic quorum must be at most ${maxQuorum} for ${members.length} domain members.`);
       return;
     }
 
@@ -130,12 +140,20 @@ export default function IntentEnableForm({
               <input
                 type="number"
                 min="1"
+                max={maxQuorum}
                 step="1"
                 value={quorum}
                 onChange={(event) => setQuorum(event.target.value)}
                 disabled={isSubmitting}
                 required
               />
+              {!isLoadingMembers && (
+                <span className="form-hint">
+                  {maxQuorum < 1
+                    ? 'At least two active domain members are required.'
+                    : `Maximum: ${maxQuorum} (one fewer than the number of domain members).`}
+                </span>
+              )}
             </label>
           </div>
 
@@ -198,7 +216,7 @@ export default function IntentEnableForm({
 
           <footer className="modal-actions">
             <button className="button-secondary" type="button" onClick={onClose} disabled={isSubmitting}>Cancel</button>
-            <button className="button-primary" type="submit" disabled={isSubmitting || isLoadingMembers}>
+            <button className="button-primary" type="submit" disabled={isSubmitting || isLoadingMembers || maxQuorum < 1}>
               {isSubmitting ? 'Enabling…' : 'Enable protection'}
             </button>
           </footer>

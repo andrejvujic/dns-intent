@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { createPanicChange, getScheduledCommits, revealCommit, scheduleCommit } from '../api/domains.js';
 import IntentGenerator from './IntentGenerator.jsx';
@@ -25,6 +25,7 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
   const [intent, setIntent] = useState(null);
   const [intentFilename, setIntentFilename] = useState('');
   const [nonce, setNonce] = useState('');
+  const revealBundleLoad = useRef(0);
   const [isApplying, setIsApplying] = useState(false);
   const [panicMode, setPanicMode] = useState(Boolean(initialPanicChange));
   const [panicChange, setPanicChange] = useState(initialPanicChange);
@@ -111,10 +112,37 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
   }
 
   function openReveal(commitId) {
+    revealBundleLoad.current += 1;
     setRevealingId(commitId);
     setIntent(null);
     setIntentFilename('');
     setNonce('');
+  }
+
+  async function loadRevealBundle(event, commit) {
+    const input = event.target;
+    const file = input.files?.[0];
+    const loadId = ++revealBundleLoad.current;
+    setNonce('');
+    if (!file) return;
+    try {
+      const bundle = JSON.parse(await file.text());
+      if (loadId !== revealBundleLoad.current) return;
+      if (bundle?.commit_request?.hash !== commit.hash) {
+        throw new Error('Select the signing bundle for this scheduled commit.');
+      }
+      const loadedNonce = bundle?.reveal_secret?.nonce;
+      if (typeof loadedNonce !== 'string' ||
+          !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(loadedNonce) ||
+          atob(loadedNonce).length < 16) {
+        throw new Error('The signing bundle must contain a valid Base64 reveal_secret.nonce of at least 16 bytes.');
+      }
+      setNonce(loadedNonce);
+    } catch (error) {
+      if (loadId !== revealBundleLoad.current) return;
+      input.value = '';
+      onNotify('error', error instanceof SyntaxError ? 'The signing bundle is not valid JSON.' : error.message);
+    }
   }
 
   async function loadIntentFile(event) {
@@ -140,6 +168,10 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
     event.preventDefault();
     if (!intent) {
       onNotify('error', 'Select the original Intent JSON file.');
+      return;
+    }
+    if (!nonce) {
+      onNotify('error', 'Upload the signing bundle for this scheduled commit.');
       return;
     }
 
@@ -301,17 +333,26 @@ export default function DnsIntentProtectedManager({ ieRecord, userId, domainId, 
                         required
                       />
                       {intentFilename && <small className="intent-file-name">Loaded: {intentFilename}</small>}
+                      <label htmlFor={`reveal-bundle-${commit.id}`}>Signing bundle JSON</label>
+                      <input
+                        id={`reveal-bundle-${commit.id}`}
+                        type="file"
+                        accept="application/json,.json"
+                        onChange={(event) => loadRevealBundle(event, commit)}
+                        disabled={isApplying}
+                        required
+                      />
+                      <p className="field-note">Upload the bundle used to schedule this commit. Its nonce is filled in automatically.</p>
                       <label htmlFor={`nonce-${commit.id}`}>Nonce</label>
                       <input
                         id={`nonce-${commit.id}`}
                         value={nonce}
-                        onChange={(event) => setNonce(event.target.value)}
-                        placeholder="Original Base64 nonce"
-                        required
+                        readOnly
+                        placeholder="Loaded from the signing bundle"
                       />
                       <div className="reveal-actions">
-                        <button type="button" onClick={() => setRevealingId(null)}>Cancel</button>
-                        <button type="submit" disabled={isApplying}>
+                        <button type="button" onClick={() => { revealBundleLoad.current += 1; setRevealingId(null); }}>Cancel</button>
+                        <button type="submit" disabled={isApplying || !intent || !nonce}>
                           {isApplying ? 'Applying…' : 'Apply change'}
                         </button>
                       </div>

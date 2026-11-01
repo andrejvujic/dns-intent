@@ -171,8 +171,9 @@ python -m scripts.create_commit /path/to/intent.json \
 
 Upload `signing-bundle.json` in the commit form. Keep both the original Intent
 file and the bundle secure: the bundle contains the nonce needed later. During
-reveal, upload the original Intent JSON and paste `reveal_secret.nonce` from the
-bundle.
+reveal, upload the original Intent JSON and the signing bundle. The form checks
+that the bundle belongs to the selected commit and automatically fills the
+read-only nonce field from `reveal_secret.nonce`.
 
 For a panic change, enable the red **Panic change** checkbox in the same Intent
 builder. Sign the downloaded JSON with the member's panic private key:

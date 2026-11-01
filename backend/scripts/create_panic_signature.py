@@ -5,12 +5,37 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 
 from app.schemas.panic import PanicChange
 from app.services.canonical import canonical_json
 from scripts.create_commit import load_private_key
+
+
+def read_panic_change(path: str) -> PanicChange:
+    """Read and validate a panic change from a file (or stdin)."""
+    source = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+    return PanicChange.model_validate_json(source)
+
+
+def create_panic_bundle(change: PanicChange, private_key: Any) -> dict[str, Any]:
+    """Create the same signature bundle used by the command-line interface."""
+    data = change.model_dump(mode="json", exclude_none=True)
+    digest = hashlib.sha256(canonical_json(data)).digest()
+    signature = private_key.sign(digest)
+    signature_b64 = base64.b64encode(signature).decode("ascii")
+    return {
+        "format": "dns-intent-panic-signature-v1",
+        "domain": change.domain,
+        "request_id": change.request_id,
+        "panic_request": {
+            "hash": base64.b64encode(digest).decode("ascii"),
+            "signature": signature_b64,
+        },
+        "signature": signature_b64,
+    }
 
 
 def main() -> None:
@@ -20,22 +45,8 @@ def main() -> None:
     parser.add_argument("-o", "--output", help="Write the signature bundle to a file")
     args = parser.parse_args()
     try:
-        source = sys.stdin.read() if args.change == "-" else Path(args.change).read_text(encoding="utf-8")
-        change = PanicChange.model_validate_json(source)
-        data = change.model_dump(mode="json", exclude_none=True)
-        digest = hashlib.sha256(canonical_json(data)).digest()
-        signature = load_private_key(args.private_key).sign(digest)
-        signature_b64 = base64.b64encode(signature).decode("ascii")
-        bundle = {
-            "format": "dns-intent-panic-signature-v1",
-            "domain": change.domain,
-            "request_id": change.request_id,
-            "panic_request": {
-                "hash": base64.b64encode(digest).decode("ascii"),
-                "signature": signature_b64,
-            },
-            "signature": signature_b64,
-        }
+        change = read_panic_change(args.change)
+        bundle = create_panic_bundle(change, load_private_key(args.private_key))
     except (OSError, ValueError, ValidationError) as exc:
         parser.error(str(exc))
     output = f"{json.dumps(bundle, indent=2, ensure_ascii=False)}\n"

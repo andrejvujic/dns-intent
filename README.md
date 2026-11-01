@@ -123,6 +123,17 @@ python -m scripts.create_panic_signature /path/to/panic.json \
   --output panic-signature.json
 ```
 
+### Desktop signature application
+
+Windows users can also open `backend/start_signature_app.bat`. The desktop app
+supports both ordinary and panic signatures, lets the user paste the private
+key, and provides file pickers for the input and output JSON files. It can also
+be started from the `backend` directory with:
+
+```bash
+python -m scripts.signature_app
+```
+
 The requester uploads both files. Other members review and download the exact
 JSON from **Pending Panic Changes**, sign it, validate their signature, and vote
 ACCEPT or REJECT. Either counter reaching the configured panic quorum closes the

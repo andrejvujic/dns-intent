@@ -22,9 +22,30 @@ bash scripts/demo.sh
 - App: `http://localhost:5173`. Login details are printed in the terminal.
 - `Ctrl+C` stops the app.
 
+### Seeded accounts
+
+All seeded accounts use the password `DnsIntent2026!`:
+
+- `andrejvujic021@gmail.com`
+- `marko.petrovic@dnsintent.test`
+- `jelena.nikolic@dnsintent.test`
+- `nikola.stojanovic@dnsintent.test`
+- `milica.ilic@dnsintent.test`
+
 For day-to-day team work, use `scripts\start.cmd` / `scripts/start.sh`: runs
 `git pull` on `main` and starts the app without deleting the database. Shared
 steps for both scripts live in `scripts/common.sh`.
+
+## Desktop signature application
+
+Windows users can open `backend/start_signature_app.bat`. The desktop app
+supports both ordinary and panic signatures, lets the user paste the private
+key, and provides file pickers for the input and output JSON files. It can also
+be started from the `backend` directory with:
+
+```bash
+python -m scripts.signature_app
+```
 
 ## Tech stack
 
@@ -91,36 +112,7 @@ becomes `APPLIED`.
 
 ![Panic change and quorum flow](presentation/images/panic-flow-v3.png)
 
-## Running the backend
-
-Requires Python 3.10+.
-
-Create the virtual environment and install dependencies:
-
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Activate the virtual environment on Windows PowerShell (instead of `source`):
-
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-Start the backend:
-
-```bash
-uvicorn app.main:app --reload
-```
-
-- Backend: `http://localhost:8000`
-- Health endpoint: `http://localhost:8000/api/health`
-- Environment variables are listed in `backend/.env.example` (optional; defaults work locally).
-
-### Email notifications
+## Email notifications
 
 When a signed intent is scheduled, every active member of that domain receives a
 personalized notification. Email is sent in the background, so a temporary SMTP
@@ -160,60 +152,21 @@ checks the intent validity window and domain, applies the protected add/update/
 delete operation, and marks the commit `CONSUMED` to prevent replay.
 
 The domain UI can generate the Intent JSON without manual editing. Sign the
-downloaded file locally and save a bundle with:
-
-```bash
-cd backend
-python -m scripts.create_commit /path/to/intent.json \
-  --private-key 'BASE64_PRIVATE_KEY' \
-  --output signing-bundle.json
-```
-
-Upload `signing-bundle.json` in the commit form. Keep both the original Intent
-file and the bundle secure: the bundle contains the nonce needed later. During
-reveal, upload the original Intent JSON and paste `reveal_secret.nonce` from the
-bundle.
+downloaded file with the desktop signature application described above, then
+upload the generated signing bundle in the commit form. Keep both the original
+Intent file and the bundle secure: the bundle contains the nonce needed later.
+During reveal, upload the original Intent JSON and paste `reveal_secret.nonce`
+from the bundle.
 
 For a panic change, enable the red **Panic change** checkbox in the same Intent
-builder. Sign the downloaded JSON with the member's panic private key:
-
-```bash
-cd backend
-python -m scripts.create_panic_signature /path/to/panic.json \
-  --private-key 'BASE64_PANIC_PRIVATE_KEY' \
-  --output panic-signature.json
-```
-
-### Desktop signature application
-
-Windows users can also open `backend/start_signature_app.bat`. The desktop app
-supports both ordinary and panic signatures, lets the user paste the private
-key, and provides file pickers for the input and output JSON files. It can also
-be started from the `backend` directory with:
-
-```bash
-python -m scripts.signature_app
-```
+builder and use the desktop application to sign the downloaded JSON with the
+member's panic private key.
 
 The requester uploads both files. Other members review and download the exact
 JSON from **Pending Panic Changes**, sign it, validate their signature, and vote
 ACCEPT or REJECT. Either counter reaching the configured panic quorum closes the
 request; accepted changes execute immediately. Panic changes can also cancel an
 active scheduled commit.
-
-## Running the frontend
-
-Requires Node.js 20.19+ or 22.12+.
-
-In a second terminal:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Frontend: `http://localhost:5173`
 
 ## Structure
 

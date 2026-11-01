@@ -17,6 +17,7 @@ from app.models import (
     DomainRecord,
     DomainRecordType,
     MembershipStatus,
+    MembershipVote,
     User,
     UserDomain,
     PanicRequest,
@@ -29,6 +30,7 @@ from app.schemas import (
     CommitCreate,
     CommitResponse,
     CommitReveal,
+    DomainCreate,
     DomainDetailResponse,
     DomainMemberResponse,
     DomainRecordCreate,
@@ -38,6 +40,8 @@ from app.schemas import (
     DomainTeamResponse,
     Intent,
     IntentEnforcementCreate,
+    InvitationCreate,
+    InviteCandidateResponse,
     MembershipRequestResponse,
     MembershipVoteCreate,
     OwnPublicKeysCreate,
@@ -66,8 +70,8 @@ from app.services.email import (
 )
 from app.services.membership import (
     accepted_memberships,
-    create_join_request,
-    join_request_notification,
+    create_invitation,
+    invitation_notification,
     record_membership_vote,
     required_quorum,
 )
@@ -388,6 +392,31 @@ def list_user_domains(user_id: int, session: DbSession) -> list[DomainSummary]:
     ).all()
 
     return [to_summary(domain, membership_status) for domain, membership_status in rows]
+
+
+@router.post("", response_model=DomainSummary, status_code=status.HTTP_201_CREATED)
+def create_domain(user_id: int, payload: DomainCreate, session: DbSession) -> DomainSummary:
+    """Any user may add a domain; the creator is its first accepted member."""
+    user = session.get(User, user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if session.scalar(select(Domain.id).where(Domain.name == payload.name)) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A domain with this name already exists.",
+        )
+    domain = Domain(
+        name=payload.name,
+        description=payload.description,
+        registrar=payload.registrar,
+    )
+    domain.user_memberships.append(
+        UserDomain(user=user, membership_status=MembershipStatus.ACCEPTED)
+    )
+    session.add(domain)
+    session.commit()
+    session.refresh(domain)
+    return to_summary(domain, MembershipStatus.ACCEPTED)
 
 
 @router.get("/{domain_id}", response_model=DomainDetailResponse)
@@ -1392,7 +1421,9 @@ def build_team_response(domain: Domain, user_id: int, session: Session) -> Domai
         )
         .options(
             selectinload(UserDomain.user),
-            selectinload(UserDomain.membership_votes),
+            selectinload(UserDomain.membership_votes)
+            .joinedload(MembershipVote.voter)
+            .joinedload(UserDomain.user),
         )
         .order_by(User.first_name, User.last_name)
     ).all()
@@ -1410,6 +1441,8 @@ def build_team_response(domain: Domain, user_id: int, session: Session) -> Domai
             (v.decision for v in votes if me is not None and v.voter_user_domain_id == me.id),
             None,
         )
+        # The inviter's ACCEPT is always the first vote on an invitation.
+        first_vote = min(membership.membership_votes, key=lambda v: v.id, default=None)
         requests.append(
             MembershipRequestResponse(
                 membership_id=membership.id,
@@ -1422,6 +1455,7 @@ def build_team_response(domain: Domain, user_id: int, session: Session) -> Domai
                 against_count=sum(v.decision == "REJECT" for v in votes),
                 required_quorum=quorum,
                 user_vote=my_vote,
+                invited_by=first_vote.voter.user.display_name if first_vote else None,
                 requested_at=membership.created_at,
             )
         )
@@ -1507,25 +1541,53 @@ def register_own_keys(
     return build_team_response(domain, user_id, session)
 
 
+@router.get("/{domain_id}/candidates", response_model=list[InviteCandidateResponse])
+def list_invite_candidates(
+    user_id: int, domain_id: int, session: DbSession
+) -> list[InviteCandidateResponse]:
+    """Registered users who are not (and are not being voted) into this domain."""
+    get_authorized_domain(user_id, domain_id, session)
+    get_active_membership(user_id, domain_id, session)
+    taken = select(UserDomain.user_id).where(
+        UserDomain.domain_id == domain_id,
+        UserDomain.membership_status != MembershipStatus.DECLINED,
+    )
+    users = session.scalars(
+        select(User)
+        .where(User.is_active.is_(True), User.id.not_in(taken))
+        .order_by(User.created_at.desc(), User.email)
+    ).all()
+    return [
+        InviteCandidateResponse(
+            user_id=user.id,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            email=user.email,
+        )
+        for user in users
+    ]
+
+
 @router.post(
-    "/{domain_id}/join",
-    response_model=DomainSummary,
+    "/{domain_id}/invitations",
+    response_model=DomainTeamResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def request_domain_access(
+def invite_to_domain(
     user_id: int,
     domain_id: int,
+    payload: InvitationCreate,
     background_tasks: BackgroundTasks,
     session: DbSession,
-) -> DomainSummary:
-    user = session.get(User, user_id)
-    domain = session.scalar(
-        select(Domain).where(Domain.id == domain_id).options(selectinload(Domain.records))
-    )
-    if user is None or not user.is_active or domain is None:
-        raise HTTPException(status_code=404, detail="Domain not found.")
-    membership = create_join_request(user, domain, session)
-    recipients, notification = join_request_notification(user, domain, session)
+) -> DomainTeamResponse:
+    """An accepted member proposes a user; a majority of accepted members decides."""
+    domain = get_authorized_domain(user_id, domain_id, session)
+    inviter = get_active_membership(user_id, domain_id, session)
+    invitee = session.get(User, payload.user_id)
+    if invitee is None or not invitee.is_active:
+        raise HTTPException(status_code=404, detail="User not found.")
+    create_invitation(invitee, domain, inviter, session)
+    recipients, notification = invitation_notification(invitee, domain, inviter.user, session)
     session.commit()
     background_tasks.add_task(send_join_request_email, recipients, notification)
-    return to_summary(domain, membership.membership_status)
+    return build_team_response(domain, user_id, session)

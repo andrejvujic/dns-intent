@@ -71,8 +71,20 @@ export function registerOwnKeys(userId, domainId, publicKeys) {
   });
 }
 
-export function requestDomainAccess(userId, domainId) {
-  return requestJson(`/api/users/${userId}/domains/${domainId}/join`, { method: 'POST' });
+export function createDomain(userId, payload) {
+  return requestJson(`/api/users/${userId}/domains`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export function getInviteCandidates(userId, domainId) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/candidates`);
+}
+
+export function inviteToDomain(userId, domainId, inviteeId) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/invitations`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: inviteeId }),
+  });
 }
 
 export function enableDnsIntent(userId, domainId, payload) {

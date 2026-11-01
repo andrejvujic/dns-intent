@@ -28,7 +28,6 @@ class RegisterRequest(BaseModel):
     # The email is also the username, so it must fit the username column.
     email: str = Field(min_length=3, max_length=100)
     password: str = Field(min_length=1, max_length=255)
-    domain_id: int = Field(gt=0)
 
     @field_validator("first_name", "last_name")
     @classmethod
@@ -66,8 +65,3 @@ class LoginResponse(BaseModel):
     message: str
     user: UserResponse
 
-
-class PublicDomain(BaseModel):
-    id: int
-    name: str
-    description: str | None

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
-import { getPublicDomains, registerUser } from '../api/auth.js';
+import { registerUser } from '../api/auth.js';
 
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/;
 
@@ -35,21 +35,8 @@ export default function RegisterForm({ onRegistered, onShowLogin, onNotify }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
-  const [domainId, setDomainId] = useState('');
-  const [domains, setDomains] = useState([]);
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    getPublicDomains()
-      .then((items) => {
-        setDomains(items);
-        if (items.length === 1) setDomainId(String(items[0].id));
-      })
-      .catch((loadError) => onNotify('error', loadError.message));
-    // Load once when the form opens; onNotify is recreated on every App render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const ruleResults = useMemo(
     () => PASSWORD_RULES.map((rule) => ({ ...rule, passed: rule.test(password) })),
@@ -65,7 +52,7 @@ export default function RegisterForm({ onRegistered, onShowLogin, onNotify }) {
   const emailValid = EMAIL_PATTERN.test(email.trim());
   const passwordsMatch = confirm.length > 0 && confirm === password;
   const canSubmit = firstName.trim() && lastName.trim() && emailValid && passwordValid && passwordsMatch
-    && domainId && !isSubmitting;
+    && !isSubmitting;
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -78,7 +65,6 @@ export default function RegisterForm({ onRegistered, onShowLogin, onNotify }) {
         last_name: lastName.trim(),
         email: email.trim(),
         password,
-        domain_id: Number(domainId),
       });
       onRegistered(data);
     } catch (registerError) {
@@ -92,7 +78,7 @@ export default function RegisterForm({ onRegistered, onShowLogin, onNotify }) {
     <form className="auth-card register-card" onSubmit={handleSubmit} noValidate>
       <h2>Create an account</h2>
       <p className="form-intro">
-        Your email is your username. Changing a protected domain needs approval from its members.
+        Your email is your username. After signing up, add your own domain or wait for a domain's members to add you.
       </p>
 
       <div className="register-name-row">
@@ -117,14 +103,6 @@ export default function RegisterForm({ onRegistered, onShowLogin, onNotify }) {
         required
       />
       {email.length > 0 && !emailValid && <p className="field-hint is-error">Enter a valid email address.</p>}
-
-      <label htmlFor="register-domain">Domain you want to join</label>
-      <select id="register-domain" value={domainId} onChange={(event) => setDomainId(event.target.value)} required>
-        <option value="" disabled>Select a domain</option>
-        {domains.map((domain) => (
-          <option key={domain.id} value={domain.id}>{domain.name}</option>
-        ))}
-      </select>
 
       <label htmlFor="register-password">Password</label>
       <div className="password-field">

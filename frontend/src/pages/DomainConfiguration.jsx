@@ -6,6 +6,8 @@ import {
   enableDnsIntent,
   getDomainMembers,
   getDomainTeam,
+  getInviteCandidates,
+  inviteToDomain,
   registerOwnKeys,
   updateDomainRecord,
   voteMembershipRequest,
@@ -56,6 +58,8 @@ export default function DomainConfiguration({
   const [team, setTeam] = useState(null);
   const [isLoadingTeam, setIsLoadingTeam] = useState(false);
   const [votingId, setVotingId] = useState(null);
+  const [candidates, setCandidates] = useState([]);
+  const [invitingId, setInvitingId] = useState(null);
   const [isRegisteringKeys, setIsRegisteringKeys] = useState(false);
   const ieRecord = domain?.records.find((record) => record.type === 'IE');
   const dnsIntentEnabled = Boolean(ieRecord);
@@ -70,7 +74,10 @@ export default function DomainConfiguration({
     if (!domainId) return;
     setIsLoadingTeam(true);
     try {
-      setTeam(await getDomainTeam(userId, domainId));
+      const loadedTeam = await getDomainTeam(userId, domainId);
+      setTeam(loadedTeam);
+      // Only accepted members may propose new users.
+      setCandidates(loadedTeam.my_status === 'ACCEPTED' ? await getInviteCandidates(userId, domainId) : []);
     } catch (teamError) {
       onNotify('error', teamError.message);
     } finally {
@@ -205,6 +212,26 @@ export default function DomainConfiguration({
       onNotify('error', voteError.message);
     } finally {
       setVotingId(null);
+    }
+  }
+
+  async function handleInvite(candidate) {
+    setInvitingId(candidate.user_id);
+    try {
+      const updatedTeam = await inviteToDomain(userId, domain.id, candidate.user_id);
+      setTeam(updatedTeam);
+      setCandidates((current) => current.filter((item) => item.user_id !== candidate.user_id));
+      const name = personName(candidate);
+      const accepted = updatedTeam.members.some(
+        (member) => member.user_id === candidate.user_id && member.membership_status === 'ACCEPTED',
+      );
+      onNotify('success', accepted
+        ? `${name} was added to ${domain.name}.`
+        : `A vote to add ${name} was started. The members were notified by email.`);
+    } catch (inviteError) {
+      onNotify('error', inviteError.message);
+    } finally {
+      setInvitingId(null);
     }
   }
 
@@ -367,7 +394,7 @@ export default function DomainConfiguration({
             Members
             {pendingRequestCount > 0 && <em className="nav-count">{pendingRequestCount}</em>}
           </span>
-          <small>Accept or decline new members</small>
+          <small>Add users and vote on new members</small>
         </button>
       </nav>
 
@@ -395,8 +422,11 @@ export default function DomainConfiguration({
             userId={userId}
             isLoading={isLoadingTeam}
             busyId={votingId}
+            candidates={candidates}
+            invitingId={invitingId}
             dnsIntentEnabled={dnsIntentEnabled}
             onVote={handleMembershipVote}
+            onInvite={handleInvite}
             onRefresh={loadTeam}
           />
         </section>

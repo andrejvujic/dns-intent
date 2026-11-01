@@ -1,7 +1,6 @@
 from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
-    PublicDomain,
     RegisterRequest,
     UserResponse,
 )
@@ -12,11 +11,14 @@ from app.schemas.commit import (
     CommitReveal,
 )
 from app.schemas.domain import (
+    DomainCreate,
     DomainDetailResponse,
     DomainMemberResponse,
     DomainRecordResponse,
     DomainSummary,
     DomainTeamResponse,
+    InvitationCreate,
+    InviteCandidateResponse,
     MembershipRequestResponse,
     MembershipVoteCreate,
     OwnPublicKeysCreate,
@@ -48,12 +50,14 @@ __all__ = [
     "DomainRecordResponse",
     "DomainRecordCreate",
     "DomainRecordUpdate",
+    "DomainCreate",
     "DomainSummary",
+    "InvitationCreate",
+    "InviteCandidateResponse",
     "DomainTeamResponse",
     "MembershipRequestResponse",
     "MembershipVoteCreate",
     "OwnPublicKeysCreate",
-    "PublicDomain",
     "RegisterRequest",
     "TeamMemberResponse",
     "IntentEnforcementCreate",

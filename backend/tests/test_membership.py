@@ -7,10 +7,14 @@ from sqlalchemy.orm import Session
 
 from app.api.routes.auth import register
 from app.api.routes.domains import (
+    create_domain,
     create_domain_record,
     delete_domain_record,
     get_domain_team,
+    invite_to_domain,
     list_domain_members,
+    list_invite_candidates,
+    list_user_domains,
     update_domain_record,
     vote_on_membership_request,
 )
@@ -23,7 +27,14 @@ from app.models import (
     User,
     UserDomain,
 )
-from app.schemas import DomainRecordCreate, DomainRecordUpdate, MembershipVoteCreate, RegisterRequest
+from app.schemas import (
+    DomainCreate,
+    DomainRecordCreate,
+    DomainRecordUpdate,
+    InvitationCreate,
+    MembershipVoteCreate,
+    RegisterRequest,
+)
 
 
 STRONG_PASSWORD = "Sigurna#Lozinka7"
@@ -36,7 +47,6 @@ class RegisterRequestTests(TestCase):
             "last_name": "Osoba",
             "email": "nova@demo.test",
             "password": STRONG_PASSWORD,
-            "domain_id": 1,
         }
         data.update(overrides)
         return data
@@ -49,17 +59,28 @@ class RegisterRequestTests(TestCase):
             with self.assertRaises(ValidationError, msg=weak):
                 RegisterRequest(**self.base(password=weak))
 
-    def test_requires_names_and_rejects_recovery_email(self) -> None:
+    def test_requires_names_and_rejects_extra_fields(self) -> None:
         with self.assertRaises(ValidationError):
             RegisterRequest(**self.base(first_name="   "))
         with self.assertRaises(ValidationError):
             RegisterRequest(**self.base(last_name=""))
+        # The domain is no longer chosen at registration.
+        with self.assertRaises(ValidationError):
+            RegisterRequest(**self.base(domain_id=1))
         with self.assertRaises(ValidationError):
             RegisterRequest(**self.base(recovery_email="rezerva@demo.test"))
 
     def test_rejects_invalid_email(self) -> None:
         with self.assertRaises(ValidationError):
             RegisterRequest(**self.base(email="not-an-email"))
+
+
+class DomainCreateTests(TestCase):
+    def test_normalizes_and_validates_domain_names(self) -> None:
+        self.assertEqual(DomainCreate(name=" Example.COM. ").name, "example.com")
+        for bad in ("localhost", "bad_domain.com", "-start.com", "a..b.com"):
+            with self.assertRaises(ValidationError, msg=bad):
+                DomainCreate(name=bad)
 
 
 class MembershipFlowTests(TestCase):
@@ -88,19 +109,27 @@ class MembershipFlowTests(TestCase):
         self.session.close()
         self.engine.dispose()
 
-    def register_applicant(self) -> User:
+    def register_user(self, email: str = "pera@demo.test") -> User:
         response = register(
             RegisterRequest(
-                first_name="Nova",
-                last_name="Osoba",
-                email="nova@demo.test",
+                first_name="Pera",
+                last_name="Peric",
+                email=email,
                 password=STRONG_PASSWORD,
-                domain_id=self.domain.id,
             ),
-            BackgroundTasks(),
             self.session,
         )
         return self.session.get(User, response.user.id)
+
+    def invite(self, invitee: User, inviter: User | None = None):
+        inviter = inviter or self.members[0]
+        return invite_to_domain(
+            inviter.id,
+            self.domain.id,
+            InvitationCreate(user_id=invitee.id),
+            BackgroundTasks(),
+            self.session,
+        )
 
     def vote(self, voter: User, decision: str):
         team = get_domain_team(voter.id, self.domain.id, self.session)
@@ -113,48 +142,78 @@ class MembershipFlowTests(TestCase):
             self.session,
         )
 
-    def test_new_user_starts_pending_and_is_not_a_key_holder(self) -> None:
-        applicant = self.register_applicant()
-        team = get_domain_team(applicant.id, self.domain.id, self.session)
-        self.assertEqual(team.my_status, "PENDING")
+    def status_of(self, user: User) -> MembershipStatus | None:
+        return self.session.scalar(
+            select(UserDomain.membership_status).where(
+                UserDomain.user_id == user.id,
+                UserDomain.domain_id == self.domain.id,
+            )
+        )
+
+    def test_registration_gives_no_domain(self) -> None:
+        pera = self.register_user()
+        self.assertEqual(list_user_domains(pera.id, self.session), [])
+        self.assertIsNone(self.status_of(pera))
+
+    def test_new_user_is_listed_as_candidate_until_invited(self) -> None:
+        pera = self.register_user()
+        candidates = list_invite_candidates(self.members[0].id, self.domain.id, self.session)
+        self.assertEqual([c.email for c in candidates], ["pera@demo.test"])
+
+        self.invite(pera)
+        candidates = list_invite_candidates(self.members[0].id, self.domain.id, self.session)
+        self.assertEqual(candidates, [])
+
+    def test_invitation_starts_a_vote_with_the_inviters_accept(self) -> None:
+        pera = self.register_user()
+        team = self.invite(pera)
+        self.assertEqual(self.status_of(pera), MembershipStatus.PENDING)
         self.assertEqual(team.required_quorum, 3)
+        self.assertEqual(team.requests[0].for_count, 1)
+        self.assertEqual(team.requests[0].invited_by, "User0 Seed")
+        self.assertEqual(team.requests[0].user_vote, "ACCEPT")
         member_ids = {m.id for m in list_domain_members(self.members[0].id, self.domain.id, self.session)}
-        self.assertNotIn(applicant.id, member_ids)
+        self.assertNotIn(pera.id, member_ids)
 
     def test_majority_accepts(self) -> None:
-        applicant = self.register_applicant()
-        self.vote(self.members[0], "ACCEPT")
+        pera = self.register_user()
+        self.invite(pera)
         self.vote(self.members[1], "ACCEPT")
         team = self.vote(self.members[2], "ACCEPT")
         self.assertEqual(team.requests, [])
-        status = self.session.scalar(
-            select(UserDomain.membership_status).where(UserDomain.user_id == applicant.id)
-        )
-        self.assertEqual(status, MembershipStatus.ACCEPTED)
+        self.assertEqual(self.status_of(pera), MembershipStatus.ACCEPTED)
 
-    def test_majority_declines_and_two_votes_are_not_enough(self) -> None:
-        applicant = self.register_applicant()
-        self.vote(self.members[0], "REJECT")
-        team = self.vote(self.members[1], "REJECT")
+    def test_majority_declines_and_user_can_be_proposed_again(self) -> None:
+        pera = self.register_user()
+        self.invite(pera)
+        self.vote(self.members[1], "REJECT")
+        team = self.vote(self.members[2], "REJECT")
         self.assertEqual(team.requests[0].against_count, 2)
-        self.vote(self.members[2], "REJECT")
-        status = self.session.scalar(
-            select(UserDomain.membership_status).where(UserDomain.user_id == applicant.id)
-        )
-        self.assertEqual(status, MembershipStatus.DECLINED)
+        self.vote(self.members[3], "REJECT")
+        self.assertEqual(self.status_of(pera), MembershipStatus.DECLINED)
 
-    def test_member_cannot_vote_twice_and_applicant_cannot_vote(self) -> None:
-        applicant = self.register_applicant()
-        self.vote(self.members[0], "ACCEPT")
+        team = self.invite(pera, inviter=self.members[4])
+        self.assertEqual(self.status_of(pera), MembershipStatus.PENDING)
+        self.assertEqual((team.requests[0].for_count, team.requests[0].against_count), (1, 0))
+
+    def test_votes_are_single_and_pending_users_have_no_say(self) -> None:
+        pera = self.register_user()
+        mika = self.register_user("mika@demo.test")
+        self.invite(pera)
         with self.assertRaises(HTTPException):
-            self.vote(self.members[0], "ACCEPT")
+            self.vote(self.members[0], "ACCEPT")  # the inviter already voted
         with self.assertRaises(HTTPException):
-            self.vote(applicant, "ACCEPT")
+            self.vote(pera, "ACCEPT")
+        with self.assertRaises(HTTPException):
+            self.invite(mika, inviter=pera)
+        with self.assertRaises(HTTPException):
+            self.invite(pera)  # already pending
 
     def test_pending_user_edits_only_unprotected_domain(self) -> None:
-        applicant = self.register_applicant()
+        pera = self.register_user()
+        self.invite(pera)
         payload = DomainRecordCreate(type="A", value={"name": "new", "address": "192.0.2.50", "ttl": 3600})
-        create_domain_record(applicant.id, self.domain.id, payload, self.session)
+        create_domain_record(pera.id, self.domain.id, payload, self.session)
 
         self.session.add(DomainRecord(domain=self.domain, record_type=self.types["IE"], value={
             "name": "@", "ttl": 3600, "panic_quorum": 3, "delay_seconds": 1800,
@@ -163,11 +222,12 @@ class MembershipFlowTests(TestCase):
         self.session.commit()
         payload = DomainRecordCreate(type="A", value={"name": "other", "address": "192.0.2.51", "ttl": 3600})
         with self.assertRaises(HTTPException) as raised:
-            create_domain_record(applicant.id, self.domain.id, payload, self.session)
+            create_domain_record(pera.id, self.domain.id, payload, self.session)
         self.assertEqual(raised.exception.status_code, 403)
 
     def test_pending_user_cannot_update_or_delete_on_protected_domain(self) -> None:
-        applicant = self.register_applicant()
+        pera = self.register_user()
+        self.invite(pera)
         record = DomainRecord(domain=self.domain, record_type=self.types["A"], value={
             "name": "www", "address": "192.0.2.20", "ttl": 3600,
         })
@@ -180,19 +240,30 @@ class MembershipFlowTests(TestCase):
 
         with self.assertRaises(HTTPException) as updated:
             update_domain_record(
-                applicant.id, self.domain.id, record.id,
+                pera.id, self.domain.id, record.id,
                 DomainRecordUpdate(value={"name": "www", "address": "192.0.2.99", "ttl": 3600}),
                 self.session,
             )
         self.assertEqual(updated.exception.status_code, 403)
 
         with self.assertRaises(HTTPException) as deleted:
-            delete_domain_record(applicant.id, self.domain.id, record.id, self.session)
+            delete_domain_record(pera.id, self.domain.id, record.id, self.session)
         self.assertEqual(deleted.exception.status_code, 403)
         self.session.refresh(record)
         self.assertEqual(record.value["address"], "192.0.2.20")
 
+    def test_any_user_can_create_a_domain_and_owns_it(self) -> None:
+        pera = self.register_user()
+        summary = create_domain(pera.id, DomainCreate(name="pera.test"), self.session)
+        self.assertEqual(summary.membership_status, "ACCEPTED")
+        team = get_domain_team(pera.id, summary.id, self.session)
+        self.assertEqual((team.accepted_count, team.required_quorum), (1, 1))
+
+        with self.assertRaises(HTTPException) as duplicate:
+            create_domain(self.members[0].id, DomainCreate(name="PERA.test"), self.session)
+        self.assertEqual(duplicate.exception.status_code, 409)
+
     def test_duplicate_email_is_rejected(self) -> None:
-        self.register_applicant()
+        self.register_user()
         with self.assertRaises(HTTPException):
-            self.register_applicant()
+            self.register_user()

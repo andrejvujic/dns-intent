@@ -2238,10 +2238,6 @@ select {
   font-weight: 800;
   white-space: nowrap;
 }
-.join-section { margin-top: 28px; }
-.join-help { margin: -4px 0 14px; color: #68746f; font-size: 0.86rem; }
-.domain-row.join-row { grid-template-columns: auto minmax(220px, 1fr) auto; cursor: default; }
-.domain-row.join-row:hover { background: #fff; }
 .membership-banner {
   display: flex;
   align-items: center;
@@ -2276,8 +2272,6 @@ select {
   .register-name-row { grid-template-columns: 1fr; gap: 0; }
   .register-name-row label { margin-top: 20px; }
   .membership-banner { flex-wrap: wrap; }
-  .domain-row.join-row { grid-template-columns: auto 1fr; }
-  .domain-row.join-row .button-secondary { grid-column: 1 / -1; }
 }
 .members-table { min-width: 0; }
 
@@ -2350,4 +2344,19 @@ select {
   .auth-card {
     width: 100%;
   }
+}
+
+.domain-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.domain-section .empty-state {
+  line-height: 1.6;
+}
+
+.add-domain-hint {
+  margin: 0 0 16px;
 }

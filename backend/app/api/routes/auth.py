@@ -1,21 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, verify_password
 from app.db.session import get_db
-from app.models import Domain, User
-from app.schemas import (
-    LoginRequest,
-    LoginResponse,
-    PublicDomain,
-    RegisterRequest,
-    UserResponse,
-)
-from app.services.email import send_join_request_email
-from app.services.membership import create_join_request, join_request_notification
+from app.models import User
+from app.schemas import LoginRequest, LoginResponse, RegisterRequest, UserResponse
 
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
@@ -43,26 +35,13 @@ def login(credentials: LoginRequest, session: DbSession) -> LoginResponse:
     )
 
 
-@router.get("/domains", response_model=list[PublicDomain])
-def list_public_domains(session: DbSession) -> list[PublicDomain]:
-    """Domains a new user can ask to join; only names, no records."""
-    domains = session.scalars(select(Domain).order_by(Domain.name)).all()
-    return [
-        PublicDomain(id=domain.id, name=domain.name, description=domain.description)
-        for domain in domains
-    ]
-
-
 @router.post(
     "/register",
     response_model=LoginResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def register(
-    payload: RegisterRequest,
-    background_tasks: BackgroundTasks,
-    session: DbSession,
-) -> LoginResponse:
+def register(payload: RegisterRequest, session: DbSession) -> LoginResponse:
+    """Create the account only; domain members add the user to a domain by quorum vote."""
     existing = session.scalar(
         select(User.id).where(
             or_(User.email == payload.email, User.username == payload.email)
@@ -73,12 +52,6 @@ def register(
             status_code=status.HTTP_409_CONFLICT,
             detail="An account with this email already exists.",
         )
-    domain = session.get(Domain, payload.domain_id)
-    if domain is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Domain not found.",
-        )
 
     user = User(
         first_name=payload.first_name,
@@ -88,14 +61,10 @@ def register(
         password_hash=hash_password(payload.password),
     )
     session.add(user)
-    session.flush()
-    create_join_request(user, domain, session)
-    recipients, notification = join_request_notification(user, domain, session)
     session.commit()
     session.refresh(user)
 
-    background_tasks.add_task(send_join_request_email, recipients, notification)
     return LoginResponse(
-        message="Account created. Your access is pending approval by the domain members.",
+        message="Account created. Create your own domain, or ask a domain member to add you.",
         user=UserResponse.model_validate(user),
     )

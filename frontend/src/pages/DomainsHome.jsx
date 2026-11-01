@@ -1,3 +1,7 @@
+import { useState } from 'react';
+
+import AddDomainForm from '../components/AddDomainForm.jsx';
+
 function DomainIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -7,24 +11,38 @@ function DomainIcon() {
   );
 }
 
-export default function DomainsHome({
-  domains,
-  joinableDomains = [],
-  isLoading,
-  onSelectDomain,
-  onRequestAccess,
-}) {
+export default function DomainsHome({ domains, isLoading, onSelectDomain, onCreateDomain }) {
+  const [isAdding, setIsAdding] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleCreate(payload) {
+    setIsSubmitting(true);
+    try {
+      if (await onCreateDomain(payload)) setIsAdding(false);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <div className="page-container">
       <section className="domain-section">
-        <div className="section-heading">
+        <div className="section-heading domain-section-heading">
           <h2>Your domains</h2>
+          <button className="add-record-button" type="button" onClick={() => setIsAdding(true)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            <span>Add domain</span>
+          </button>
         </div>
 
         {isLoading ? (
           <div className="loading-state">Loading domains…</div>
         ) : domains.length === 0 ? (
-          <div className="empty-state">No domains are assigned to this account.</div>
+          <div className="empty-state">
+            You are not a member of any domain yet. Add your own domain, or ask a member of an existing domain to add you from its Members tab.
+          </div>
         ) : (
           <div className="domain-list">
             {domains.map((domain) => (
@@ -59,27 +77,12 @@ export default function DomainsHome({
         )}
       </section>
 
-      {!isLoading && joinableDomains.length > 0 && (
-        <section className="domain-section join-section">
-          <div className="section-heading">
-            <h2>Other domains</h2>
-          </div>
-          <p className="join-help">Ask to join a domain. Its members are notified by email and decide by majority vote.</p>
-          <div className="domain-list">
-            {joinableDomains.map((domain) => (
-              <div className="domain-row join-row" key={domain.id}>
-                <span className="domain-icon"><DomainIcon /></span>
-                <span className="domain-primary">
-                  <strong>{domain.name}</strong>
-                  <small>{domain.description || 'Managed domain'}</small>
-                </span>
-                <button className="button-secondary" type="button" onClick={() => onRequestAccess(domain.id)}>
-                  Request access
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
+      {isAdding && (
+        <AddDomainForm
+          isSubmitting={isSubmitting}
+          onSubmit={handleCreate}
+          onClose={() => setIsAdding(false)}
+        />
       )}
     </div>
   );

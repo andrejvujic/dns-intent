@@ -28,8 +28,10 @@ def accepted_memberships(domain_id: int, session: Session) -> list[UserDomain]:
     )
 
 
-def create_join_request(user: User, domain: Domain, session: Session) -> UserDomain:
-    """Add the user to the domain as PENDING; a declined user may ask again."""
+def create_invitation(
+    user: User, domain: Domain, inviter: UserDomain, session: Session
+) -> UserDomain:
+    """Propose adding the user to the domain; the inviter's ACCEPT vote is recorded."""
     membership = session.scalar(
         select(UserDomain).where(
             UserDomain.user_id == user.id,
@@ -44,22 +46,26 @@ def create_join_request(user: User, domain: Domain, session: Session) -> UserDom
         )
         session.add(membership)
     elif membership.membership_status == MembershipStatus.DECLINED:
+        # A declined user may be proposed again; the old votes no longer count.
         membership.membership_status = MembershipStatus.PENDING
         membership.is_active = True
         membership.created_at = datetime.now(timezone.utc)
         for vote in list(membership.membership_votes):
             session.delete(vote)
+        session.flush()
+        session.refresh(membership)
     else:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="You already have access to this domain or a pending request for it.",
+            detail="This user is already a member of the domain or already has a pending vote.",
         )
     session.flush()
+    record_membership_vote(membership, inviter, "ACCEPT", session)
     return membership
 
 
-def join_request_notification(
-    user: User, domain: Domain, session: Session
+def invitation_notification(
+    user: User, domain: Domain, inviter: User, session: Session
 ) -> tuple[list[EmailRecipient], JoinRequestEmail]:
     members = accepted_memberships(domain.id, session)
     recipients = [
@@ -70,6 +76,7 @@ def join_request_notification(
         domain_name=domain.name,
         applicant_name=user.display_name,
         applicant_email=user.email,
+        invited_by=inviter.display_name,
         required_quorum=required_quorum(len(members)),
         requested_at=datetime.now(timezone.utc),
     )

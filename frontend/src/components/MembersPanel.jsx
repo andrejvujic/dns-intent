@@ -15,8 +15,11 @@ export default function MembersPanel({
   userId,
   isLoading,
   busyId,
+  candidates = [],
+  invitingId,
   dnsIntentEnabled,
   onVote,
+  onInvite,
   onRefresh,
 }) {
   if (isLoading && !team) {
@@ -36,13 +39,13 @@ export default function MembersPanel({
         <button type="button" onClick={onRefresh} disabled={isLoading}>Refresh</button>
       </div>
       <p className="commit-help">
-        A new member gets privileges on this domain only after more than half of the {team.accepted_count} accepted
-        members accept them ({team.required_quorum} votes).
+        Any accepted member can propose adding a registered user. The user gets privileges on this domain only
+        after more than half of the {team.accepted_count} accepted members accept them ({team.required_quorum} votes).
       </p>
 
-      <h3 className="members-subheading">Join requests</h3>
+      <h3 className="members-subheading">Pending votes</h3>
       {team.requests.length === 0 ? (
-        <p className="commit-empty">No pending join requests.</p>
+        <p className="commit-empty">No users are waiting for a vote.</p>
       ) : (
         <div className="commit-list">
           {team.requests.map((request) => {
@@ -51,10 +54,12 @@ export default function MembersPanel({
               <article className="commit-item membership-request" key={request.membership_id}>
                 <div className="commit-item-top">
                   <span className="commit-status membership-status-pending">★ PENDING</span>
-                  <span>Requested {formatDate(request.requested_at)}</span>
+                  <span>Proposed {formatDate(request.requested_at)}</span>
                 </div>
                 <h3>{fullName(request)}{isMe ? ' (you)' : ''}</h3>
-                <p className="membership-email">{request.email}</p>
+                <p className="membership-email">
+                  {request.email}{request.invited_by ? ` · proposed by ${request.invited_by}` : ''}
+                </p>
                 <dl className="panic-quorum-grid">
                   <div><dt>Accepted</dt><dd>{request.for_count} / {request.required_quorum}</dd></div>
                   <div><dt>Declined</dt><dd>{request.against_count} / {request.required_quorum}</dd></div>
@@ -62,7 +67,7 @@ export default function MembersPanel({
                 {request.user_vote ? (
                   <div className="panic-user-vote"><span>✓</span><p>Your vote: <strong>{request.user_vote}</strong></p></div>
                 ) : isMe ? (
-                  <p className="field-note">Waiting for the domain members to vote. You cannot vote on your own request.</p>
+                  <p className="field-note">Waiting for the domain members to vote. You cannot vote on your own membership.</p>
                 ) : canVote ? (
                   <div className="reveal-actions panic-vote-actions">
                     <button
@@ -89,6 +94,44 @@ export default function MembersPanel({
             );
           })}
         </div>
+      )}
+
+      {canVote && (
+        <>
+          <h3 className="members-subheading">Registered users</h3>
+          {candidates.length === 0 ? (
+            <p className="commit-empty">Every registered user is already a member of this domain or waiting for a vote.</p>
+          ) : (
+            <div className="table-scroll">
+              <table className="records-table members-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th className="actions-heading">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidates.map((candidate) => (
+                    <tr key={candidate.user_id}>
+                      <td className="record-name">{fullName(candidate)}</td>
+                      <td>{candidate.email}</td>
+                      <td className="record-actions">
+                        <button
+                          type="button"
+                          disabled={invitingId !== null}
+                          onClick={() => onInvite(candidate)}
+                        >
+                          {invitingId === candidate.user_id ? 'Adding…' : '+ Add to domain'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
       <h3 className="members-subheading">All members</h3>

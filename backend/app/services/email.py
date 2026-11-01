@@ -47,6 +47,7 @@ class JoinRequestEmail:
     domain_name: str
     applicant_name: str
     applicant_email: str
+    invited_by: str
     required_quorum: int
     requested_at: datetime
 
@@ -228,21 +229,23 @@ def _build_join_request_message(
     first_name = escape(recipient.first_name)
     applicant_name = escape(notification.applicant_name)
     applicant_email = escape(notification.applicant_email)
+    invited_by = escape(notification.invited_by)
     requested_at = _format_utc(notification.requested_at)
     message = EmailMessage()
     message["Subject"] = (
-        f"[DNS Intent] A new user wants to join {notification.domain_name}"
+        f"[DNS Intent] Vote: add {notification.applicant_email} to {notification.domain_name}"
     )
     message["From"] = formataddr((settings.smtp_from_name, settings.smtp_from_email))
     message["To"] = recipient.email
     message.set_content(
         f"""Hello {recipient.first_name},
 
-A new user registered and asked to join {notification.domain_name}.
+{notification.invited_by} proposed adding a user to {notification.domain_name}.
 
 Name: {notification.applicant_name}
 Email: {notification.applicant_email}
-Requested at: {requested_at}
+Proposed by: {notification.invited_by}
+Proposed at: {requested_at}
 Approvals needed: {notification.required_quorum}
 
 To accept or decline, sign in to DNS Intent yourself and open the domain's Members tab.
@@ -260,12 +263,13 @@ This email contains no links on purpose. If you did not expect this request, dec
           <tr><td style="padding:28px 32px;background:#102f28;color:#f7faf8;"><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="width:46px;height:46px;text-align:center;border-radius:13px;background:#9fe3bd;color:#102f28;font-size:16px;font-weight:800;">DI</td><td style="padding-left:14px;font-size:20px;font-weight:750;">DNS Intent</td></tr></table></td></tr>
           <tr><td style="padding:36px 32px;">
             <p style="margin:0 0 12px;color:#9a6b12;font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;">Membership request</p>
-            <h1 style="margin:0 0 18px;font-size:28px;line-height:1.2;letter-spacing:-.03em;">A new user wants to join {domain_name}</h1>
-            <p style="margin:0 0 26px;color:#68746f;font-size:16px;line-height:1.65;">Hello {first_name}. The user below registered and asked to manage <strong style="color:#17211e;">{domain_name}</strong>. They have no privileges until a majority of members accepts them.</p>
+            <h1 style="margin:0 0 18px;font-size:28px;line-height:1.2;letter-spacing:-.03em;">Vote on adding a user to {domain_name}</h1>
+            <p style="margin:0 0 26px;color:#68746f;font-size:16px;line-height:1.65;">Hello {first_name}. {invited_by} proposed adding the user below to <strong style="color:#17211e;">{domain_name}</strong>. They get no privileges until a majority of members accepts them.</p>
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;background:#f7faf8;border:1px solid #e3ebe6;border-radius:12px;">
               <tr><td style="padding:14px 18px;color:#68746f;font-size:13px;border-bottom:1px solid #e3ebe6;">Name</td><td align="right" style="padding:14px 18px;font-size:14px;font-weight:700;border-bottom:1px solid #e3ebe6;">{applicant_name}</td></tr>
               <tr><td style="padding:14px 18px;color:#68746f;font-size:13px;border-bottom:1px solid #e3ebe6;">Email</td><td align="right" style="padding:14px 18px;font-size:14px;border-bottom:1px solid #e3ebe6;">{applicant_email}</td></tr>
-              <tr><td style="padding:14px 18px;color:#68746f;font-size:13px;border-bottom:1px solid #e3ebe6;">Requested at</td><td align="right" style="padding:14px 18px;font-size:14px;border-bottom:1px solid #e3ebe6;">{requested_at}</td></tr>
+              <tr><td style="padding:14px 18px;color:#68746f;font-size:13px;border-bottom:1px solid #e3ebe6;">Proposed by</td><td align="right" style="padding:14px 18px;font-size:14px;font-weight:700;border-bottom:1px solid #e3ebe6;">{invited_by}</td></tr>
+              <tr><td style="padding:14px 18px;color:#68746f;font-size:13px;border-bottom:1px solid #e3ebe6;">Proposed at</td><td align="right" style="padding:14px 18px;font-size:14px;border-bottom:1px solid #e3ebe6;">{requested_at}</td></tr>
               <tr><td style="padding:14px 18px;color:#68746f;font-size:13px;">Approvals needed</td><td align="right" style="padding:14px 18px;font-size:14px;font-weight:700;">{notification.required_quorum}</td></tr>
             </table>
             <p style="margin:24px 0 0;color:#68746f;font-size:14px;line-height:1.6;">To accept or decline, sign in to DNS Intent yourself and open the domain's <strong style="color:#17211e;">Members</strong> tab.</p>
@@ -291,7 +295,7 @@ def send_join_request_email(
         return
     if not settings.smtp_configured:
         logger.warning(
-            "Membership request from %s was created, but email was skipped because SMTP is not configured.",
+            "Invitation for %s was created, but email was skipped because SMTP is not configured.",
             notification.applicant_email,
         )
         return
@@ -315,7 +319,7 @@ def send_join_request_email(
                     )
     except (OSError, smtplib.SMTPException):
         logger.exception(
-            "Could not connect to SMTP while notifying users about membership request from %s.",
+            "Could not connect to SMTP while notifying users about the invitation for %s.",
             notification.applicant_email,
         )
 

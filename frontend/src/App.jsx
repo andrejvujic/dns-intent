@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
-import { getPublicDomains, loginUser } from './api/auth.js';
-import { getUserDomain, getUserDomains, requestDomainAccess } from './api/domains.js';
+import { loginUser } from './api/auth.js';
+import { createDomain, getUserDomain, getUserDomains } from './api/domains.js';
 import AppHeader from './components/AppHeader.jsx';
 import RegisterForm from './components/RegisterForm.jsx';
 import DomainConfiguration from './pages/DomainConfiguration.jsx';
@@ -29,7 +29,6 @@ function App() {
   const [selectedDomain, setSelectedDomain] = useState(null);
   const [isLoadingDomain, setIsLoadingDomain] = useState(false);
   const [authMode, setAuthMode] = useState('login');
-  const [allDomains, setAllDomains] = useState([]);
 
   useEffect(() => {
     if (!notification) {
@@ -49,11 +48,9 @@ function App() {
     let ignoreResult = false;
     setIsLoadingDomains(true);
 
-    Promise.all([getUserDomains(user.id), getPublicDomains()])
-      .then(([userDomains, publicDomains]) => {
-        if (ignoreResult) return;
-        setDomains(userDomains);
-        setAllDomains(publicDomains);
+    getUserDomains(user.id)
+      .then((userDomains) => {
+        if (!ignoreResult) setDomains(userDomains);
       })
       .catch((loadError) => {
         if (!ignoreResult) notify('error', loadError.message);
@@ -90,13 +87,15 @@ function App() {
     notify('success', data.message);
   }
 
-  async function handleRequestAccess(domainId) {
+  async function handleCreateDomain(payload) {
     try {
-      const summary = await requestDomainAccess(user.id, domainId);
+      const summary = await createDomain(user.id, payload);
       setDomains((current) => [...current, summary].sort((a, b) => a.name.localeCompare(b.name)));
-      notify('success', `Access to ${summary.name} was requested. Its members were notified by email.`);
-    } catch (requestError) {
-      notify('error', requestError.message);
+      notify('success', `${summary.name} was added. You are its first member.`);
+      return true;
+    } catch (createError) {
+      notify('error', createError.message);
+      return false;
     }
   }
 
@@ -167,10 +166,9 @@ function App() {
           ) : (
             <DomainsHome
               domains={domains}
-              joinableDomains={allDomains.filter((item) => !domains.some((domain) => domain.id === item.id))}
               isLoading={isLoadingDomains}
               onSelectDomain={handleSelectDomain}
-              onRequestAccess={handleRequestAccess}
+              onCreateDomain={handleCreateDomain}
             />
           )}
         </>

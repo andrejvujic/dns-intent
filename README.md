@@ -31,6 +31,66 @@ steps for both scripts live in `scripts/common.sh`.
 - Backend: Python, FastAPI, SQLAlchemy, SQLite, Pydantic, Uvicorn
 - Frontend: React, Vite, JavaScript
 
+## How it works
+
+DNS Intent protects selected DNS record types with two authorization paths:
+
+- the normal **commit → hold → reveal** flow hides the intended change until
+  the configured hold period has elapsed;
+- the **panic change** flow skips the hold period, but requires a quorum of
+  individually signed member votes.
+
+Each accepted, active domain member has a separate Ed25519 **Intent key pair**
+and **panic key pair**. The browser generates both pairs when DNS Intent is
+enabled. Only the public keys are stored by the backend; private keys remain
+with the member.
+
+### 1. Commit: schedule a change without revealing it
+
+The client creates the Intent and a random 32-byte nonce locally. It computes
+`SHA-256(canonical_json(intent) || nonce)`, Base64-encodes that digest as the
+commit `hash`, and signs the raw digest with the signed-in member's Intent
+private key.
+
+The commit request contains only `hash` and `signature`. The backend verifies
+the signature with that member's stored `intent_public_key`, rejects a duplicate
+hash, reads `delay_seconds` from the domain's IE policy, and stores the commit
+as `HOLDING` or `READY`. It stores neither the Intent nor the nonce.
+
+![Commit flow](presentation/images/commit-flow-v2.png)
+
+### 2. Reveal: verify and apply the scheduled change
+
+After `matures_at`, the client sends the original `intent` and the same Base64
+`nonce` to the reveal endpoint for the selected `commit_id`. No hash or
+signature is sent again.
+
+The backend loads the stored commit, checks its state, blocks the reveal while
+an active `CANCEL_COMMIT` panic vote exists, enforces the hold and Intent time
+windows, and recomputes the commitment hash. Only a constant-time match against
+the stored hash allows the protected `ADD_RECORD`, `UPDATE_RECORD`, or
+`DELETE_RECORD` operation to run. The commit is then marked `CONSUMED`, so it
+cannot be applied twice.
+
+![Reveal and apply flow](presentation/images/apply-flow-v2.png)
+
+### 3. Panic change: member signatures and quorum voting
+
+A panic request is a `PanicChange` signed with the requester's panic private
+key. Creating it records the requester's valid signature and an `ACCEPT` vote.
+Other accepted members sign the exact same canonical change with their own panic
+keys, attach that signature to the pending request, and then cast one `ACCEPT`
+or `REJECT` vote using the same signature.
+
+Reaching the configured `required_quorum` of `ACCEPT` votes applies the change
+immediately, without a commit or hold period. A `REJECT` quorum rejects it, and
+an unresolved request becomes `EXPIRED` after `expires_at`. `ROTATE_KEYS` is the
+one two-stage exception: quorum first sets `QUORUM_REACHED`, after which the
+requester must supply new public keys for every active member before the request
+becomes `APPLIED`.
+
+![Panic change and quorum flow](presentation/images/panic-flow-v3.png)
+
 ## Running the backend
 
 Requires Python 3.10+.
@@ -82,10 +142,11 @@ Enabling DNS Intent generates an Ed25519 intent and panic key pair for every act
 domain member in the browser. Public keys are stored by the backend; private keys
 are downloaded as an organized JSON file and never uploaded.
 
-When DNS Intent is enabled, a member can schedule a change by submitting its
-Base64 SHA-256 commitment hash and Ed25519 signature. The backend verifies the
-signature and starts the configured hold period. All domain members can review
-scheduled commits and their creation/maturity times in the domain UI.
+When DNS Intent is enabled, a member can schedule a change by submitting a
+Base64-encoded SHA-256 commitment hash and an Ed25519 signature over the raw
+digest. The backend verifies the signature and starts the configured hold
+period. All domain members can review scheduled commits and their
+creation/maturity times in the domain UI.
 
 The nonce is generated once by the client and used to calculate
 `SHA-256(canonical_intent || nonce)`. It is deliberately not sent while scheduling

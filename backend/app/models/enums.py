@@ -24,5 +24,6 @@ class PanicVoteDecision(StrEnum):
 
 class MembershipStatus(StrEnum):
     PENDING = "PENDING"
+    QUORUM_REACHED = "QUORUM_REACHED"
     ACCEPTED = "ACCEPTED"
     DECLINED = "DECLINED"

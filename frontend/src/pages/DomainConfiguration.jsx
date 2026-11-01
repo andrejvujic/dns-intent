@@ -10,7 +10,6 @@ import {
   inviteToDomain,
   registerOwnKeys,
   updateDomainRecord,
-  voteMembershipRequest,
 } from '../api/domains.js';
 import DirectDnsRecordManager from '../components/DirectDnsRecordManager.jsx';
 import DnsIntentProtectedManager from '../components/DnsIntentProtectedManager.jsx';
@@ -57,8 +56,9 @@ export default function DomainConfiguration({
   const [preparedPanicChange, setPreparedPanicChange] = useState(null);
   const [team, setTeam] = useState(null);
   const [isLoadingTeam, setIsLoadingTeam] = useState(false);
-  const [votingId, setVotingId] = useState(null);
   const [candidates, setCandidates] = useState([]);
+  const [candidateQuery, setCandidateQuery] = useState('');
+  const [isSearchingCandidates, setIsSearchingCandidates] = useState(false);
   const [invitingId, setInvitingId] = useState(null);
   const [isRegisteringKeys, setIsRegisteringKeys] = useState(false);
   const ieRecord = domain?.records.find((record) => record.type === 'IE');
@@ -76,8 +76,6 @@ export default function DomainConfiguration({
     try {
       const loadedTeam = await getDomainTeam(userId, domainId);
       setTeam(loadedTeam);
-      // Only accepted members may propose new users.
-      setCandidates(loadedTeam.my_status === 'ACCEPTED' ? await getInviteCandidates(userId, domainId) : []);
     } catch (teamError) {
       onNotify('error', teamError.message);
     } finally {
@@ -90,6 +88,24 @@ export default function DomainConfiguration({
   useEffect(() => {
     loadTeam();
   }, [loadTeam]);
+  useEffect(() => {
+    const email = candidateQuery.trim();
+    if (email.length < 2 || team?.my_status !== 'ACCEPTED') {
+      setCandidates([]);
+      setIsSearchingCandidates(false);
+      return undefined;
+    }
+    let active = true;
+    setIsSearchingCandidates(true);
+    const timer = setTimeout(() => {
+      getInviteCandidates(userId, domainId, email)
+        .then((results) => { if (active) setCandidates(results); })
+        .catch((error) => { if (active) onNotify('error', error.message); })
+        .finally(() => { if (active) setIsSearchingCandidates(false); });
+    }, 300);
+    return () => { active = false; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateQuery, team?.my_status, userId, domainId]);
   const protectedTypes = useMemo(() => {
     const operations = ieRecord?.value?.protected_operations;
     if (!Array.isArray(operations)) return new Set();
@@ -193,41 +209,30 @@ export default function DomainConfiguration({
     }
   }
 
-  async function handleMembershipVote(request, decision) {
-    setVotingId(request.membership_id);
-    try {
-      const updatedTeam = await voteMembershipRequest(userId, domain.id, request.membership_id, decision);
-      setTeam(updatedTeam);
-      const stillPending = updatedTeam.requests.some((item) => item.membership_id === request.membership_id);
-      const accepted = updatedTeam.members.some(
-        (member) => member.user_id === request.user_id && member.membership_status === 'ACCEPTED',
-      );
-      const name = personName(request);
-      onNotify('success', stillPending
-        ? `Your vote was recorded. ${name} still needs more votes.`
-        : accepted
-          ? `The quorum accepted ${name}. They can now take part in this domain.`
-          : `The quorum declined ${name}'s request.`);
-    } catch (voteError) {
-      onNotify('error', voteError.message);
-    } finally {
-      setVotingId(null);
-    }
-  }
-
   async function handleInvite(candidate) {
+    if (dnsIntentEnabled) {
+      const change = {
+        type: 'PANIC_CHANGE',
+        request_id: crypto.randomUUID(),
+        domain: domain.name,
+        operation: 'ADD_MEMBER',
+        member_user_id: candidate.user_id,
+        member_email: candidate.email,
+        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      };
+      downloadPanicChange(domain.name, change.operation, change);
+      setPreparedPanicChange(change);
+      setActiveView('commits');
+      onNotify('success', 'The invitation JSON was downloaded. Sign it with your panic key, then submit it below to start the quorum vote.');
+      return;
+    }
     setInvitingId(candidate.user_id);
     try {
       const updatedTeam = await inviteToDomain(userId, domain.id, candidate.user_id);
       setTeam(updatedTeam);
       setCandidates((current) => current.filter((item) => item.user_id !== candidate.user_id));
       const name = personName(candidate);
-      const accepted = updatedTeam.members.some(
-        (member) => member.user_id === candidate.user_id && member.membership_status === 'ACCEPTED',
-      );
-      onNotify('success', accepted
-        ? `${name} was added to ${domain.name}.`
-        : `A vote to add ${name} was started. The members were notified by email.`);
+      onNotify('success', `${name} was added to ${domain.name}.`);
     } catch (inviteError) {
       onNotify('error', inviteError.message);
     } finally {
@@ -327,7 +332,7 @@ export default function DomainConfiguration({
             <strong>Your membership is pending approval.</strong>
             <p>
               {dnsIntentEnabled
-                ? 'This domain is protected by DNS Intent, so you can only view it until a majority of its members accepts you.'
+                ? 'This domain is protected by DNS Intent. Membership needs a majority vote and the inviter’s final approval.'
                 : 'You can already edit records because this domain is not protected. Protected actions need a majority of members to accept you.'}
             </p>
           </div>
@@ -421,12 +426,14 @@ export default function DomainConfiguration({
             team={team}
             userId={userId}
             isLoading={isLoadingTeam}
-            busyId={votingId}
             candidates={candidates}
+            candidateQuery={candidateQuery}
+            onCandidateQueryChange={setCandidateQuery}
+            isSearchingCandidates={isSearchingCandidates}
             invitingId={invitingId}
             dnsIntentEnabled={dnsIntentEnabled}
-            onVote={handleMembershipVote}
             onInvite={handleInvite}
+            onReviewInvitations={() => setActiveView('panic')}
             onRefresh={loadTeam}
           />
         </section>
@@ -434,7 +441,8 @@ export default function DomainConfiguration({
 
       {dnsIntentEnabled && !isPendingMember && activeView === 'panic' && (
         <section id="panic-workflow-view" role="tabpanel" aria-label="Pending Panic Changes">
-          <PendingPanicChanges userId={userId} domainId={domain.id} domainName={domain.name} onNotify={onNotify} onApplied={onReloadDomain} />
+          <PendingPanicChanges userId={userId} domainId={domain.id} domainName={domain.name} onNotify={onNotify}
+            onApplied={async () => { await Promise.all([onReloadDomain(), loadTeam()]); }} onChanged={loadTeam} />
         </section>
       )}
 
@@ -450,6 +458,9 @@ export default function DomainConfiguration({
             onApplied={onReloadDomain}
             onPanicSubmitted={() => {
               setPreparedPanicChange(null);
+              setCandidates([]);
+              setCandidateQuery('');
+              loadTeam();
               setActiveView('panic');
             }}
             initialPanicChange={preparedPanicChange}

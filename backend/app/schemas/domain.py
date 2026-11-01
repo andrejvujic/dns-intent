@@ -52,6 +52,7 @@ class TeamMemberResponse(BaseModel):
 
 class MembershipRequestResponse(BaseModel):
     membership_id: int
+    panic_request_id: int | None = None
     user_id: int
     first_name: str
     last_name: str
@@ -62,6 +63,7 @@ class MembershipRequestResponse(BaseModel):
     required_quorum: int
     user_vote: str | None
     invited_by: str | None
+    can_finalize: bool = False
     requested_at: datetime
 
 

@@ -4,7 +4,7 @@ import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -17,7 +17,6 @@ from app.models import (
     DomainRecord,
     DomainRecordType,
     MembershipStatus,
-    MembershipVote,
     User,
     UserDomain,
     PanicRequest,
@@ -44,6 +43,7 @@ from app.schemas import (
     InviteCandidateResponse,
     MembershipRequestResponse,
     MembershipVoteCreate,
+    MemberPublicKeys,
     OwnPublicKeysCreate,
     PanicCreate,
     PanicResponse,
@@ -64,15 +64,12 @@ from app.services.email import (
     EmailRecipient,
     PanicChangeEmail,
     ScheduledIntentEmail,
-    send_join_request_email,
     send_panic_change_email,
     send_scheduled_intent_email,
 )
 from app.services.membership import (
     accepted_memberships,
     create_invitation,
-    invitation_notification,
-    record_membership_vote,
     required_quorum,
 )
 
@@ -114,7 +111,7 @@ def get_authorized_domain(user_id: int, domain_id: int, session: Session) -> Dom
             Domain.id == domain_id,
             UserDomain.user_id == user_id,
             UserDomain.is_active.is_(True),
-            UserDomain.membership_status != MembershipStatus.DECLINED,
+            UserDomain.membership_status.in_((MembershipStatus.PENDING, MembershipStatus.ACCEPTED)),
             User.is_active.is_(True),
         )
     )
@@ -222,6 +219,10 @@ def pending_cancellation_for_commit(
 def panic_response(request: PanicRequest, user_id: int) -> PanicResponse:
     votes = {vote.user_domain.user_id: vote for vote in request.signatures}
     current_vote = votes.get(user_id)
+    member = None
+    if request.operation == "ADD_MEMBER":
+        member = next((membership.user for membership in request.domain.user_memberships
+                       if membership.user_id == request.change_json["member_user_id"]), None)
     return PanicResponse(
         id=request.id,
         request_id=request.request_id,
@@ -229,6 +230,7 @@ def panic_response(request: PanicRequest, user_id: int) -> PanicResponse:
         created_by_user_id=request.created_by_user_id,
         created_by_username=request.created_by.username,
         change=request.change_json,
+        member=DomainMemberResponse.model_validate(member) if member else None,
         hash=request.hash,
         required_quorum=request.required_quorum,
         for_count=sum(vote.decision == PanicVoteDecision.ACCEPT for vote in request.signatures),
@@ -374,6 +376,10 @@ def delete_domain_change_requests(
     if preserve_panic_request_id is not None:
         panic_query = panic_query.where(PanicRequest.id != preserve_panic_request_id)
     for panic_request in session.scalars(panic_query).all():
+        if panic_request.operation == "ADD_MEMBER" and panic_request.status in (
+            PanicRequestStatus.PENDING, PanicRequestStatus.QUORUM_REACHED,
+        ):
+            set_invitation_status(panic_request, MembershipStatus.DECLINED, session)
         session.delete(panic_request)
 
 
@@ -385,7 +391,7 @@ def list_user_domains(user_id: int, session: DbSession) -> list[DomainSummary]:
         .where(
             UserDomain.user_id == user_id,
             UserDomain.is_active.is_(True),
-            UserDomain.membership_status != MembershipStatus.DECLINED,
+            UserDomain.membership_status.in_((MembershipStatus.PENDING, MembershipStatus.ACCEPTED)),
         )
         .options(selectinload(Domain.records))
         .order_by(Domain.name)
@@ -430,7 +436,7 @@ def get_user_domain(
             Domain.id == domain_id,
             UserDomain.user_id == user_id,
             UserDomain.is_active.is_(True),
-            UserDomain.membership_status != MembershipStatus.DECLINED,
+            UserDomain.membership_status.in_((MembershipStatus.PENDING, MembershipStatus.ACCEPTED)),
         )
         .options(
             selectinload(Domain.records).joinedload(DomainRecord.record_type)
@@ -714,6 +720,14 @@ def list_scheduled_commits(
     return responses
 
 
+def set_invitation_status(request: PanicRequest, target: MembershipStatus, session: Session) -> None:
+    if request.operation != "ADD_MEMBER":
+        return
+    membership = find_membership(request.change_json["member_user_id"], request.domain_id, session)
+    if membership is not None and membership.membership_status != MembershipStatus.ACCEPTED:
+        membership.membership_status = target
+
+
 def load_panic_request(
     request_id: int, domain_id: int, session: Session
 ) -> PanicRequest:
@@ -734,6 +748,7 @@ def load_panic_request(
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if request.status == PanicRequestStatus.PENDING and now > expires_at:
         request.status = PanicRequestStatus.EXPIRED
+        set_invitation_status(request, MembershipStatus.DECLINED, session)
         session.commit()
     return request
 
@@ -776,6 +791,24 @@ def create_panic_change(
         raise HTTPException(status_code=409, detail="This panic request_id has already been used.")
     if session.scalar(select(PanicRequest.id).where(PanicRequest.hash == calculated_hash)):
         raise HTTPException(status_code=409, detail="This panic change has already been submitted.")
+
+    if payload.change.operation == "ADD_MEMBER":
+        invitee = session.get(User, payload.change.member_user_id)
+        if invitee is None or not invitee.is_active:
+            raise HTTPException(status_code=404, detail="User not found.")
+        if invitee.email != payload.change.member_email:
+            raise HTTPException(status_code=400, detail="The signed email does not match the invited user.")
+        pending_ids = session.scalars(select(PanicRequest.id).where(
+            PanicRequest.domain_id == domain.id,
+            PanicRequest.operation == "ADD_MEMBER",
+            PanicRequest.status.in_((PanicRequestStatus.PENDING, PanicRequestStatus.QUORUM_REACHED)),
+        )).all()
+        for pending_id in pending_ids:
+            pending = load_panic_request(pending_id, domain.id, session)
+            if (pending.change_json["member_user_id"] == invitee.id
+                    and pending.status in (PanicRequestStatus.PENDING, PanicRequestStatus.QUORUM_REACHED)):
+                raise HTTPException(status_code=409, detail="This user already has a pending signed invitation.")
+        create_invitation(invitee, domain, membership, session, protected=True)
 
     if payload.change.operation == "CANCEL_COMMIT":
         target_commit = session.scalar(
@@ -864,7 +897,8 @@ def create_panic_change(
     )
     if quorum == 1:
         request.status = PanicRequestStatus.QUORUM_REACHED
-        if request.operation != "ROTATE_KEYS":
+        set_invitation_status(request, MembershipStatus.QUORUM_REACHED, session)
+        if request.operation not in ("ROTATE_KEYS", "ADD_MEMBER"):
             apply_panic_change(
                 domain,
                 change_data,
@@ -881,6 +915,7 @@ def create_panic_change(
         .where(
             UserDomain.domain_id == domain.id,
             UserDomain.is_active.is_(True),
+            UserDomain.membership_status == MembershipStatus.ACCEPTED,
             User.is_active.is_(True),
         )
         .order_by(User.id)
@@ -1000,7 +1035,8 @@ def vote_on_panic_change(
     against_count = sum(item.decision == PanicVoteDecision.REJECT for item in votes)
     if for_count >= request.required_quorum:
         request.status = PanicRequestStatus.QUORUM_REACHED
-        if request.operation != "ROTATE_KEYS":
+        set_invitation_status(request, MembershipStatus.QUORUM_REACHED, session)
+        if request.operation not in ("ROTATE_KEYS", "ADD_MEMBER"):
             apply_panic_change(
                 domain,
                 request.change_json,
@@ -1011,6 +1047,44 @@ def vote_on_panic_change(
             request.applied_at = datetime.now(timezone.utc)
     elif against_count >= request.required_quorum:
         request.status = PanicRequestStatus.REJECTED
+        set_invitation_status(request, MembershipStatus.DECLINED, session)
+    session.commit()
+    return panic_response(load_panic_request(request.id, domain_id, session), user_id)
+
+
+@router.post("/{domain_id}/panic-changes/{panic_id}/membership", response_model=PanicResponse)
+def finalize_member_addition(
+    user_id: int, domain_id: int, panic_id: int, payload: MemberPublicKeys, session: DbSession,
+) -> PanicResponse:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    get_active_membership(user_id, domain_id, session)
+    request = load_panic_request(panic_id, domain_id, session)
+    if request.operation != "ADD_MEMBER":
+        raise HTTPException(status_code=409, detail="This panic request is not a member addition.")
+    if request.created_by_user_id != user_id:
+        raise HTTPException(status_code=403, detail="Only the inviter can apply this member addition.")
+    if request.status != PanicRequestStatus.QUORUM_REACHED:
+        raise HTTPException(status_code=409, detail="The signed panic quorum has not been reached.")
+    if find_ie_record(domain.id, session) is None:
+        raise HTTPException(status_code=409, detail="DNS Intent is not enabled for this domain.")
+    invitee = session.get(User, request.change_json["member_user_id"])
+    if invitee is None or not invitee.is_active or invitee.email != request.change_json["member_email"]:
+        raise HTTPException(status_code=409, detail="The invited user no longer matches the signed request.")
+    applicant = find_membership(invitee.id, domain.id, session)
+    if applicant is None or applicant.membership_status != MembershipStatus.QUORUM_REACHED:
+        raise HTTPException(status_code=409, detail="This invitation is no longer awaiting application.")
+    if payload.user_id != invitee.id:
+        raise HTTPException(status_code=422, detail="Public keys must belong to the user in the signed invitation.")
+    try:
+        validate_public_key(payload.intent_public_key, field="intent_public_key")
+        validate_public_key(payload.panic_public_key, field="panic_public_key")
+    except CryptoInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    applicant.intent_public_key = payload.intent_public_key
+    applicant.panic_public_key = payload.panic_public_key
+    applicant.membership_status = MembershipStatus.ACCEPTED
+    request.status = PanicRequestStatus.APPLIED
+    request.applied_at = datetime.now(timezone.utc)
     session.commit()
     return panic_response(load_panic_request(request.id, domain_id, session), user_id)
 
@@ -1247,10 +1321,10 @@ def apply_panic_change(
             membership.panic_public_key = None
         return None
 
-    if operation == "ROTATE_KEYS":
+    if operation in ("ROTATE_KEYS", "ADD_MEMBER"):
         raise HTTPException(
             status_code=409,
-            detail="Key rotation must be finalized with new keys after quorum approval.",
+            detail="This operation must be finalized by its initiator after quorum approval.",
         )
 
     if operation == "CANCEL_COMMIT":
@@ -1411,6 +1485,17 @@ def delete_domain_record(
 
 
 def build_team_response(domain: Domain, user_id: int, session: Session) -> DomainTeamResponse:
+    # Only cryptographically verified panic requests contribute membership votes.
+    panic_ids = session.scalars(select(PanicRequest.id).where(
+        PanicRequest.domain_id == domain.id,
+        PanicRequest.operation == "ADD_MEMBER",
+        PanicRequest.status.in_((PanicRequestStatus.PENDING, PanicRequestStatus.QUORUM_REACHED)),
+    )).all()
+    signed_requests = {}
+    for panic_id in panic_ids:
+        request = load_panic_request(panic_id, domain.id, session)
+        if request.status in (PanicRequestStatus.PENDING, PanicRequestStatus.QUORUM_REACHED):
+            signed_requests[request.change_json["member_user_id"]] = request
     memberships = session.scalars(
         select(UserDomain)
         .join(User, User.id == UserDomain.user_id)
@@ -1421,41 +1506,36 @@ def build_team_response(domain: Domain, user_id: int, session: Session) -> Domai
         )
         .options(
             selectinload(UserDomain.user),
-            selectinload(UserDomain.membership_votes)
-            .joinedload(MembershipVote.voter)
-            .joinedload(UserDomain.user),
         )
         .order_by(User.first_name, User.last_name)
     ).all()
     accepted = [m for m in memberships if m.membership_status == MembershipStatus.ACCEPTED]
-    accepted_ids = {m.id for m in accepted}
-    quorum = required_quorum(len(accepted))
+    ie_record = find_ie_record(domain.id, session)
+    quorum = int((ie_record.value or {}).get("panic_quorum", 1)) if ie_record else required_quorum(len(accepted))
     me = next((m for m in memberships if m.user_id == user_id), None)
 
     requests = []
     for membership in memberships:
-        if membership.membership_status != MembershipStatus.PENDING:
+        if membership.membership_status not in (MembershipStatus.PENDING, MembershipStatus.QUORUM_REACHED):
             continue
-        votes = [v for v in membership.membership_votes if v.voter_user_domain_id in accepted_ids]
-        my_vote = next(
-            (v.decision for v in votes if me is not None and v.voter_user_domain_id == me.id),
-            None,
-        )
-        # The inviter's ACCEPT is always the first vote on an invitation.
-        first_vote = min(membership.membership_votes, key=lambda v: v.id, default=None)
+        signed = signed_requests.get(membership.user_id)
+        panic = panic_response(signed, user_id) if signed else None
         requests.append(
             MembershipRequestResponse(
                 membership_id=membership.id,
+                panic_request_id=panic.id if panic else None,
                 user_id=membership.user_id,
                 first_name=membership.user.first_name,
                 last_name=membership.user.last_name,
                 email=membership.user.email,
-                status=membership.membership_status.value,
-                for_count=sum(v.decision == "ACCEPT" for v in votes),
-                against_count=sum(v.decision == "REJECT" for v in votes),
-                required_quorum=quorum,
-                user_vote=my_vote,
-                invited_by=first_vote.voter.user.display_name if first_vote else None,
+                status=panic.status if panic else "SIGNATURE_REQUIRED",
+                for_count=panic.for_count if panic else 0,
+                against_count=panic.against_count if panic else 0,
+                required_quorum=panic.required_quorum if panic else quorum,
+                user_vote=panic.user_vote if panic else None,
+                invited_by=signed.created_by.display_name if signed else None,
+                can_finalize=bool(panic and panic.status == "QUORUM_REACHED"
+                                  and panic.created_by_user_id == user_id),
                 requested_at=membership.created_at,
             )
         )
@@ -1474,7 +1554,7 @@ def build_team_response(domain: Domain, user_id: int, session: Session) -> Domai
                 has_intent_keys=m.intent_public_key is not None,
             )
             for m in memberships
-            if m.membership_status != MembershipStatus.DECLINED
+            if m.membership_status in (MembershipStatus.PENDING, MembershipStatus.QUORUM_REACHED, MembershipStatus.ACCEPTED)
         ],
         requests=requests,
     )
@@ -1497,20 +1577,21 @@ def vote_on_membership_request(
     payload: MembershipVoteCreate,
     session: DbSession,
 ) -> DomainTeamResponse:
-    domain = get_authorized_domain(user_id, domain_id, session)
-    voter = get_active_membership(user_id, domain_id, session)
-    applicant = session.scalar(
-        select(UserDomain)
-        .where(UserDomain.id == membership_id, UserDomain.domain_id == domain.id)
-        .options(selectinload(UserDomain.membership_votes))
-    )
-    if applicant is None:
-        raise HTTPException(status_code=404, detail="Membership request was not found.")
-    if applicant.id == voter.id:
-        raise HTTPException(status_code=403, detail="You cannot vote on your own request.")
-    record_membership_vote(applicant, voter, payload.decision, session)
-    session.commit()
-    return build_team_response(domain, user_id, session)
+    get_authorized_domain(user_id, domain_id, session)
+    get_active_membership(user_id, domain_id, session)
+    raise HTTPException(status_code=409, detail="Use the signed ADD_MEMBER panic flow to vote on membership.")
+
+
+@router.post(
+    "/{domain_id}/membership-requests/{membership_id}/apply",
+    response_model=DomainTeamResponse,
+)
+def apply_membership_request(
+    user_id: int, domain_id: int, membership_id: int, session: DbSession
+) -> DomainTeamResponse:
+    get_authorized_domain(user_id, domain_id, session)
+    get_active_membership(user_id, domain_id, session)
+    raise HTTPException(status_code=409, detail="Use the approved ADD_MEMBER panic request to apply membership.")
 
 
 @router.post("/{domain_id}/my-keys", response_model=DomainTeamResponse)
@@ -1543,19 +1624,25 @@ def register_own_keys(
 
 @router.get("/{domain_id}/candidates", response_model=list[InviteCandidateResponse])
 def list_invite_candidates(
-    user_id: int, domain_id: int, session: DbSession
+    user_id: int, domain_id: int, session: DbSession,
+    email: str = Query(default="", max_length=255),
 ) -> list[InviteCandidateResponse]:
-    """Registered users who are not (and are not being voted) into this domain."""
+    """Search registered invite candidates by email without exposing the whole directory."""
     get_authorized_domain(user_id, domain_id, session)
     get_active_membership(user_id, domain_id, session)
+    email = email.strip().lower()
+    if len(email) < 2:
+        return []
     taken = select(UserDomain.user_id).where(
         UserDomain.domain_id == domain_id,
         UserDomain.membership_status != MembershipStatus.DECLINED,
     )
+    escaped = email.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     users = session.scalars(
         select(User)
-        .where(User.is_active.is_(True), User.id.not_in(taken))
-        .order_by(User.created_at.desc(), User.email)
+        .where(User.is_active.is_(True), User.id.not_in(taken),
+               User.email.ilike(f"%{escaped}%", escape="\\"))
+        .order_by(User.email).limit(20)
     ).all()
     return [
         InviteCandidateResponse(
@@ -1580,14 +1667,14 @@ def invite_to_domain(
     background_tasks: BackgroundTasks,
     session: DbSession,
 ) -> DomainTeamResponse:
-    """An accepted member proposes a user; a majority of accepted members decides."""
+    """Unprotected invitations are immediate; protected ones require a signed panic request."""
     domain = get_authorized_domain(user_id, domain_id, session)
     inviter = get_active_membership(user_id, domain_id, session)
     invitee = session.get(User, payload.user_id)
     if invitee is None or not invitee.is_active:
         raise HTTPException(status_code=404, detail="User not found.")
-    create_invitation(invitee, domain, inviter, session)
-    recipients, notification = invitation_notification(invitee, domain, inviter.user, session)
+    if find_ie_record(domain.id, session) is not None:
+        raise HTTPException(status_code=409, detail="Sign and submit an ADD_MEMBER panic request to invite this user.")
+    create_invitation(invitee, domain, inviter, session, protected=False)
     session.commit()
-    background_tasks.add_task(send_join_request_email, recipients, notification)
     return build_team_response(domain, user_id, session)

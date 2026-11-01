@@ -4,6 +4,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.domain_record import MemberPublicKeys, validate_record_value
+from app.schemas.domain import DomainMemberResponse
 
 
 PANIC_OPERATIONS = {
@@ -13,6 +14,7 @@ PANIC_OPERATIONS = {
     "CANCEL_COMMIT",
     "DISABLE_DNS_INTENT",
     "ROTATE_KEYS",
+    "ADD_MEMBER",
 }
 
 
@@ -26,6 +28,8 @@ class PanicChange(BaseModel):
     record_type: str | None = Field(default=None, min_length=1, max_length=30)
     record_id: int | None = Field(default=None, gt=0)
     commit_id: int | None = Field(default=None, gt=0)
+    member_user_id: int | None = Field(default=None, gt=0)
+    member_email: str | None = Field(default=None, min_length=3, max_length=255)
     value: dict[str, Any] | None = None
     expires_at: datetime
 
@@ -51,6 +55,14 @@ class PanicChange(BaseModel):
     def validate_change(self) -> "PanicChange":
         if self.expires_at.tzinfo is None:
             raise ValueError("expires_at must include a timezone")
+        if self.operation == "ADD_MEMBER":
+            if self.member_user_id is None or self.member_email is None:
+                raise ValueError("ADD_MEMBER requires member_user_id and member_email")
+            if any(value is not None for value in (self.record_type, self.record_id, self.commit_id, self.value)):
+                raise ValueError("ADD_MEMBER does not accept record or commit fields")
+            return self
+        if self.member_user_id is not None or self.member_email is not None:
+            raise ValueError("Member fields are only valid for ADD_MEMBER")
         if self.operation == "DISABLE_DNS_INTENT":
             if any((self.record_type, self.record_id, self.commit_id, self.value)):
                 raise ValueError("DISABLE_DNS_INTENT does not accept record or commit fields")
@@ -110,6 +122,7 @@ class PanicResponse(BaseModel):
     created_by_user_id: int
     created_by_username: str
     change: dict[str, Any]
+    member: DomainMemberResponse | None = None
     hash: str
     required_quorum: int
     for_count: int

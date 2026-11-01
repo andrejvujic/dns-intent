@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -55,14 +55,14 @@ class UserDomain(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
+    invited_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     domain_id: Mapped[int] = mapped_column(
         ForeignKey("domains.id", ondelete="CASCADE"), index=True
     )
     intent_public_key: Mapped[str | None] = mapped_column(String(44), nullable=True)
     panic_public_key: Mapped[str | None] = mapped_column(String(44), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    # Self-registered users start as PENDING until a majority of accepted
-    # members of this domain votes them in.
+    # Protected invitations remain pending until quorum and inviter application.
     membership_status: Mapped[MembershipStatus] = mapped_column(
         Enum(
             MembershipStatus,
@@ -82,7 +82,7 @@ class UserDomain(Base):
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
 
-    user: Mapped[User] = relationship(back_populates="domain_memberships")
+    user: Mapped[User] = relationship(back_populates="domain_memberships", foreign_keys=[user_id])
     domain: Mapped[Domain] = relationship(back_populates="user_memberships")
     commits: Mapped[list[Commit]] = relationship(
         back_populates="user_domain", cascade="all, delete-orphan"

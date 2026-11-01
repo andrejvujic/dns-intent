@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { attachPanicSignature, finalizeKeyRotation, getDomainMembers, getPanicChanges, votePanicChange } from '../api/domains.js';
-import { downloadPrivateKeys, generateDomainKeys, publicKeysPayload } from '../crypto/keys.js';
+import { attachPanicSignature, finalizeKeyRotation, finalizeMemberAddition, getDomainMembers, getPanicChanges, votePanicChange } from '../api/domains.js';
+import { downloadPrivateKeys, generateDomainKeys, generateMemberKeys, publicKeysPayload } from '../crypto/keys.js';
 
 function downloadJson(change) {
   const blob = new Blob([`${JSON.stringify(change, null, 2)}\n`], { type: 'application/json' });
@@ -16,16 +16,18 @@ function downloadJson(change) {
 function changeSummary(change) {
   if (change.operation === 'DISABLE_DNS_INTENT') return 'Disable DNS Intent and clear scheduled changes';
   if (change.operation === 'ROTATE_KEYS') return 'Rotate Intent and panic keys and clear scheduled changes';
+  if (change.operation === 'ADD_MEMBER') return `Add ${change.member_email} to the domain`;
   if (change.operation === 'CANCEL_COMMIT') return `Cancel scheduled commit #${change.commit_id}`;
   if (change.operation === 'ADD_RECORD') return `Add ${change.record_type} record`;
   return `${change.operation === 'UPDATE_RECORD' ? 'Update' : 'Delete'} DNS record #${change.record_id}`;
 }
 
-export default function PendingPanicChanges({ userId, domainId, domainName, onNotify, onApplied }) {
+export default function PendingPanicChanges({ userId, domainId, domainName, onNotify, onApplied, onChanged }) {
   const [items, setItems] = useState([]);
   const [signatures, setSignatures] = useState({});
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
+  const [memberKeyFiles, setMemberKeyFiles] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,7 +71,26 @@ export default function PendingPanicChanges({ userId, domainId, domainName, onNo
       const updated = await votePanicChange(userId, domainId, item.id, decision, signature);
       onNotify('success', `Vote recorded: ${decision}. ${updated.status === 'APPLIED' ? 'Quorum was reached and the change was applied.' : ''}`);
       await load();
+      await onChanged?.();
       if (updated.status === 'APPLIED') await onApplied();
+    } catch (error) { onNotify('error', error.message); }
+    finally { setBusyId(null); }
+  }
+
+  async function applyMemberAddition(item) {
+    setBusyId(item.id);
+    try {
+      if (!item.member || item.member.id !== item.change.member_user_id) {
+        throw new Error('The invited member details are unavailable. Refresh the request and try again.');
+      }
+      const keyFile = memberKeyFiles[item.id] || await generateMemberKeys({ name: domainName }, item.member);
+      setMemberKeyFiles((current) => ({ ...current, [item.id]: keyFile }));
+      const [publicKeys] = publicKeysPayload(keyFile);
+      await finalizeMemberAddition(userId, domainId, item.id, publicKeys);
+      downloadPrivateKeys(keyFile, `member-${item.member.id}-private-keys`);
+      onNotify('success', `${item.change.member_email} was added, their public keys were saved, and their private-key JSON was downloaded.`);
+      await load();
+      await onApplied();
     } catch (error) { onNotify('error', error.message); }
     finally { setBusyId(null); }
   }
@@ -126,6 +147,14 @@ export default function PendingPanicChanges({ userId, domainId, domainName, onNo
                 </span>
               </div>
             )}
+            {item.status === 'QUORUM_REACHED' && item.change.operation === 'ADD_MEMBER' && (
+              <div className="panic-decision-notice decision-accepted">
+                <strong>Member addition approved</strong>
+                <span>{item.created_by_user_id === userId
+                  ? 'The signed quorum was met. Apply the addition to generate this member’s keys and download their private-key JSON.'
+                  : `Waiting for ${item.created_by_username}, who initiated this invitation, to apply the addition.`}</span>
+              </div>
+            )}
             {item.status === 'REJECTED' && <div className="panic-decision-notice decision-rejected"><strong>Decision reached: REJECT</strong><span>The rejection quorum was met. No change was applied.</span></div>}
             <details className="panic-json-review"><summary>Review requested JSON</summary><pre>{JSON.stringify(item.change, null, 2)}</pre></details>
             {item.status === 'PENDING' && (
@@ -134,6 +163,17 @@ export default function PendingPanicChanges({ userId, domainId, domainName, onNo
             {item.status === 'QUORUM_REACHED' && item.change.operation === 'ROTATE_KEYS' && item.created_by_user_id === userId && (
               <button className="primary-button" type="button" disabled={busyId === item.id} onClick={() => generateRotationKeys(item)}>
                 {busyId === item.id ? 'Generating keys…' : 'Generate file and rotate keys'}
+              </button>
+            )}
+            {item.status === 'QUORUM_REACHED' && item.change.operation === 'ADD_MEMBER' && item.created_by_user_id === userId && (
+              <button className="primary-button" type="button" disabled={busyId === item.id} onClick={() => applyMemberAddition(item)}>
+                {busyId === item.id ? 'Generating keys and applying…' : 'Generate keys and apply addition'}
+              </button>
+            )}
+            {item.status === 'APPLIED' && memberKeyFiles[item.id] && (
+              <button className="commit-reveal-button panic-download-button" type="button"
+                onClick={() => downloadPrivateKeys(memberKeyFiles[item.id], `member-${item.change.member_user_id}-private-keys`)}>
+                Download member keys again
               </button>
             )}
             {item.status === 'PENDING' && !item.user_vote && <div className="reveal-form panic-vote-form">

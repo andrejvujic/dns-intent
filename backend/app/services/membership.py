@@ -4,8 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Domain, MembershipStatus, MembershipVote, User, UserDomain
-from app.services.email import EmailRecipient, JoinRequestEmail
+from app.models import Domain, MembershipStatus, User, UserDomain
 
 
 def required_quorum(accepted_count: int) -> int:
@@ -29,9 +28,10 @@ def accepted_memberships(domain_id: int, session: Session) -> list[UserDomain]:
 
 
 def create_invitation(
-    user: User, domain: Domain, inviter: UserDomain, session: Session
+    user: User, domain: Domain, inviter: UserDomain, session: Session,
+    *, protected: bool,
 ) -> UserDomain:
-    """Propose adding the user to the domain; the inviter's ACCEPT vote is recorded."""
+    """Add immediately without protection, or start a protected invitation."""
     membership = session.scalar(
         select(UserDomain).where(
             UserDomain.user_id == user.id,
@@ -42,12 +42,15 @@ def create_invitation(
         membership = UserDomain(
             user=user,
             domain=domain,
-            membership_status=MembershipStatus.PENDING,
+            membership_status=MembershipStatus.PENDING if protected else MembershipStatus.ACCEPTED,
+            invited_by_user_id=inviter.user_id,
         )
         session.add(membership)
-    elif membership.membership_status == MembershipStatus.DECLINED:
-        # A declined user may be proposed again; the old votes no longer count.
-        membership.membership_status = MembershipStatus.PENDING
+    elif membership.membership_status != MembershipStatus.ACCEPTED:
+        # A signed proposal may restart an expired or legacy unsigned invitation.
+        # The caller must first reject any live ADD_MEMBER panic request.
+        membership.membership_status = MembershipStatus.PENDING if protected else MembershipStatus.ACCEPTED
+        membership.invited_by_user_id = inviter.user_id
         membership.is_active = True
         membership.created_at = datetime.now(timezone.utc)
         for vote in list(membership.membership_votes):
@@ -60,57 +63,4 @@ def create_invitation(
             detail="This user is already a member of the domain or already has a pending vote.",
         )
     session.flush()
-    record_membership_vote(membership, inviter, "ACCEPT", session)
     return membership
-
-
-def invitation_notification(
-    user: User, domain: Domain, inviter: User, session: Session
-) -> tuple[list[EmailRecipient], JoinRequestEmail]:
-    members = accepted_memberships(domain.id, session)
-    recipients = [
-        EmailRecipient(email=member.user.email, first_name=member.user.display_name)
-        for member in members
-    ]
-    notification = JoinRequestEmail(
-        domain_name=domain.name,
-        applicant_name=user.display_name,
-        applicant_email=user.email,
-        invited_by=inviter.display_name,
-        required_quorum=required_quorum(len(members)),
-        requested_at=datetime.now(timezone.utc),
-    )
-    return recipients, notification
-
-
-def tally_membership_votes(applicant: UserDomain, session: Session) -> None:
-    """Accept or decline once a strict majority of accepted members agrees."""
-    voters = {member.id for member in accepted_memberships(applicant.domain_id, session)}
-    quorum = required_quorum(len(voters))
-    votes = [vote for vote in applicant.membership_votes if vote.voter_user_domain_id in voters]
-    accepts = sum(vote.decision == "ACCEPT" for vote in votes)
-    rejects = sum(vote.decision == "REJECT" for vote in votes)
-    if accepts >= quorum:
-        applicant.membership_status = MembershipStatus.ACCEPTED
-    elif rejects >= quorum:
-        applicant.membership_status = MembershipStatus.DECLINED
-
-
-def record_membership_vote(
-    applicant: UserDomain, voter: UserDomain, decision: str, session: Session
-) -> None:
-    if applicant.membership_status != MembershipStatus.PENDING:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This membership request is no longer pending.",
-        )
-    if any(vote.voter_user_domain_id == voter.id for vote in applicant.membership_votes):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="You have already voted on this request.",
-        )
-    applicant.membership_votes.append(
-        MembershipVote(voter_user_domain_id=voter.id, decision=decision)
-    )
-    session.flush()
-    tally_membership_votes(applicant, session)

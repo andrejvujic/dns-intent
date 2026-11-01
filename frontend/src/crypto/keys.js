@@ -40,8 +40,7 @@ export async function generateDomainKeys(domain, members) {
   };
 }
 
-// For one member accepted after protection was enabled: keys are made on
-// that member's own device and only the public halves leave the browser.
+// Generate a single-member bundle locally; only its public keys go to the API.
 export function generateMemberKeys(domain, user) {
   return generateDomainKeys(domain, [user]);
 }

@@ -42,7 +42,7 @@ class User(Base):
         return full or self.email.partition("@")[0]
 
     domain_memberships: Mapped[list[UserDomain]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
+        back_populates="user", cascade="all, delete-orphan", foreign_keys="UserDomain.user_id"
     )
     created_panic_requests: Mapped[list[PanicRequest]] = relationship(
         back_populates="created_by", foreign_keys="PanicRequest.created_by_user_id"

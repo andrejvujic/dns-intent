@@ -52,6 +52,8 @@ def migrate_membership_schema() -> None:
                 "ALTER TABLE user_domains ADD COLUMN membership_status VARCHAR(8) "
                 "NOT NULL DEFAULT 'ACCEPTED'"
             ))
+        if "invited_by_user_id" not in membership_columns:
+            connection.execute(text("ALTER TABLE user_domains ADD COLUMN invited_by_user_id INTEGER"))
 
 
 def get_db() -> Generator[Session, None, None]:

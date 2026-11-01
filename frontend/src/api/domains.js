@@ -59,9 +59,9 @@ export function getDomainTeam(userId, domainId) {
   return requestJson(`/api/users/${userId}/domains/${domainId}/team`);
 }
 
-export function voteMembershipRequest(userId, domainId, membershipId, decision) {
-  return requestJson(`/api/users/${userId}/domains/${domainId}/membership-requests/${membershipId}/vote`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }),
+export function finalizeMemberAddition(userId, domainId, panicId, publicKeys) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/panic-changes/${panicId}/membership`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(publicKeys),
   });
 }
 
@@ -77,8 +77,8 @@ export function createDomain(userId, payload) {
   });
 }
 
-export function getInviteCandidates(userId, domainId) {
-  return requestJson(`/api/users/${userId}/domains/${domainId}/candidates`);
+export function getInviteCandidates(userId, domainId, email) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/candidates?email=${encodeURIComponent(email)}`);
 }
 
 export function inviteToDomain(userId, domainId, inviteeId) {

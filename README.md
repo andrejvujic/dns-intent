@@ -33,6 +33,20 @@ steps for both scripts live in `scripts/common.sh`.
 
 ## How it works
 
+Accepted members can find a registered user by email and select **Invite to domain**.
+With DNS Intent disabled, the user joins immediately. With DNS Intent enabled,
+the button prepares an `ADD_MEMBER` panic JSON containing the user's ID and email.
+The inviter signs it with their panic key and submits the signing bundle, which
+records their verified signature and initial `ACCEPT` vote. Other members use
+**Pending Panic Changes** to sign the same JSON, validate their panic signature,
+and cast a final `ACCEPT` or `REJECT` vote. The configured `panic_quorum` applies,
+just as for key rotation. Once it is reached, only the inviter can select
+**Generate keys and apply addition** to activate the membership. The inviter's
+browser generates fresh Intent and panic key pairs only for the new member.
+The backend saves their public keys and activates membership in one transaction;
+the browser then downloads a `dns-intent-private-keys-v1` JSON containing only
+that member in `users`. Private keys are generated locally and are not sent to the API.
+
 DNS Intent protects selected DNS record types with two authorization paths:
 
 - the normal **commit → hold → reveal** flow hides the intended change until
@@ -84,10 +98,11 @@ or `REJECT` vote using the same signature.
 
 Reaching the configured `required_quorum` of `ACCEPT` votes applies the change
 immediately, without a commit or hold period. A `REJECT` quorum rejects it, and
-an unresolved request becomes `EXPIRED` after `expires_at`. `ROTATE_KEYS` is the
-one two-stage exception: quorum first sets `QUORUM_REACHED`, after which the
-requester must supply new public keys for every active member before the request
-becomes `APPLIED`.
+an unresolved request becomes `EXPIRED` after `expires_at`. `ROTATE_KEYS` and
+`ADD_MEMBER` use two stages: quorum first sets `QUORUM_REACHED`, then the initiator
+explicitly applies the action. Rotation requires new public keys for every active
+member; member addition activates only the user identified in the signed request.
+The request then becomes `APPLIED`.
 
 ![Panic change and quorum flow](presentation/images/panic-flow-v3.png)
 

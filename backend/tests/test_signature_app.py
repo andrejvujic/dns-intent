@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import tempfile
 from pathlib import Path
@@ -6,7 +7,11 @@ from unittest import TestCase
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from pydantic import ValidationError
 
+from app.schemas.panic import PanicCreate
+from app.services.canonical import canonical_json
+from app.services.crypto import verify_signature
 from scripts.signature_app import NORMAL_SIGNATURE, PANIC_SIGNATURE, sign_file
 
 
@@ -20,6 +25,7 @@ class SignatureAppTests(TestCase):
             encryption_algorithm=serialization.NoEncryption(),
         )
         cls.private_key = base64.b64encode(key_der).decode("ascii")
+        cls.public_key = base64.b64encode(private_key.public_key().public_bytes_raw()).decode("ascii")
 
     def test_creates_normal_signature_bundle(self) -> None:
         intent = {
@@ -64,6 +70,58 @@ class SignatureAppTests(TestCase):
     def test_rejects_missing_output_path(self) -> None:
         with self.assertRaisesRegex(ValueError, "output JSON"):
             sign_file(NORMAL_SIGNATURE, "intent.json", "", self.private_key)
+
+    def test_add_member_bundle_matches_backend_hash_and_signature(self) -> None:
+        change = {
+            "type": "PANIC_CHANGE",
+            "request_id": "add-member-request-123",
+            "domain": "example.test",
+            "operation": "ADD_MEMBER",
+            "member_user_id": 7,
+            "member_email": "member@example.test",
+            "expires_at": "2026-11-01T13:00:00.000Z",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory, "add-member.json")
+            output_path = Path(directory, "signed.json")
+            input_path.write_text(json.dumps(change), encoding="utf-8")
+
+            sign_file(PANIC_SIGNATURE, str(input_path), str(output_path), self.private_key)
+
+            bundle = json.loads(output_path.read_text(encoding="utf-8"))
+            request = PanicCreate(change=change, **bundle["panic_request"])
+            data = request.change.model_dump(mode="json", exclude_none=True)
+            digest = hashlib.sha256(canonical_json(data)).digest()
+            self.assertEqual(data["member_user_id"], 7)
+            self.assertEqual(data["member_email"], "member@example.test")
+            self.assertEqual(bundle["format"], "dns-intent-panic-signature-v1")
+            self.assertEqual(bundle["request_id"], change["request_id"])
+            self.assertEqual(base64.b64decode(request.hash), digest)
+            self.assertTrue(verify_signature(self.public_key, request.signature, digest))
+            for field, replacement in (("member_user_id", 8), ("member_email", "other@example.test")):
+                tampered = {**data, field: replacement}
+                tampered_digest = hashlib.sha256(canonical_json(tampered)).digest()
+                self.assertFalse(verify_signature(self.public_key, request.signature, tampered_digest))
+
+    def test_add_member_requires_both_member_fields_without_writing_output(self) -> None:
+        change = {
+            "type": "PANIC_CHANGE",
+            "request_id": "add-member-request-123",
+            "domain": "example.test",
+            "operation": "ADD_MEMBER",
+            "member_user_id": 7,
+            "member_email": "member@example.test",
+            "expires_at": "2026-11-01T13:00:00Z",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory, "add-member.json")
+            output_path = Path(directory, "signed.json")
+            for missing in ("member_user_id", "member_email"):
+                with self.subTest(missing=missing):
+                    input_path.write_text(json.dumps({key: value for key, value in change.items() if key != missing}), encoding="utf-8")
+                    with self.assertRaises(ValidationError):
+                        sign_file(PANIC_SIGNATURE, str(input_path), str(output_path), self.private_key)
+                    self.assertFalse(output_path.exists())
 
     def test_does_not_overwrite_input_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.api.routes.domains import (
     apply_key_rotation,
     apply_panic_change,
+    attach_panic_signature,
+    finalize_member_removal,
     finalize_key_rotation,
 )
 from app.db.base import Base
@@ -19,12 +21,13 @@ from app.models import (
     Domain,
     DomainRecord,
     DomainRecordType,
+    MembershipStatus,
     PanicRequest,
     PanicRequestStatus,
     User,
     UserDomain,
 )
-from app.schemas.panic import PanicChange, RotationKeysCreate
+from app.schemas.panic import PanicChange, PanicSignatureCreate, RotationKeysCreate
 
 
 class PanicShutdownSchemaTests(TestCase):
@@ -63,6 +66,24 @@ class PanicShutdownSchemaTests(TestCase):
                 domain="example.test",
                 operation="ROTATE_KEYS",
                 public_keys=[],
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            )
+
+    def test_member_removal_requires_only_a_target_user(self) -> None:
+        change = PanicChange(
+            request_id="remove-member-request",
+            domain="example.test",
+            operation="REMOVE_MEMBER",
+            target_user_id=2,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        self.assertEqual(change.target_user_id, 2)
+
+        with self.assertRaises(ValidationError):
+            PanicChange(
+                request_id="remove-without-target",
+                domain="example.test",
+                operation="REMOVE_MEMBER",
                 expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
             )
 
@@ -295,3 +316,139 @@ class ApplyPanicShutdownTests(TestCase):
             )
             self.assertEqual(membership.intent_public_key, new_intent_key)
             self.assertEqual(membership.panic_public_key, new_panic_key)
+
+    def test_initiator_removes_member_after_quorum_and_recalculates_policy(self) -> None:
+        with Session(self.engine) as session:
+            ie_type = DomainRecordType(name="IE")
+            domain = Domain(name="remove.test")
+            initiator = User(
+                first_name="Action",
+                last_name="Owner",
+                username="action.owner",
+                email="owner@remove.test",
+                password_hash="unused",
+            )
+            target_user = User(
+                first_name="Target",
+                last_name="Member",
+                username="target.member",
+                email="target@remove.test",
+                password_hash="unused",
+            )
+            third_user = User(
+                first_name="Third",
+                last_name="Member",
+                username="third.member",
+                email="third@remove.test",
+                password_hash="unused",
+            )
+            initiator_membership = UserDomain(user=initiator, domain=domain)
+            target_membership = UserDomain(
+                user=target_user,
+                domain=domain,
+                intent_public_key="i" * 44,
+                panic_public_key="p" * 44,
+            )
+            third_membership = UserDomain(user=third_user, domain=domain)
+            domain.records.append(
+                DomainRecord(
+                    record_type=ie_type,
+                    value={"protected_operations": ["A"], "panic_quorum": 3},
+                )
+            )
+            session.add_all([
+                ie_type,
+                domain,
+                initiator,
+                target_user,
+                third_user,
+                initiator_membership,
+                target_membership,
+                third_membership,
+            ])
+            session.flush()
+            request = PanicRequest(
+                request_id="approved-removal",
+                domain=domain,
+                created_by=initiator,
+                operation="REMOVE_MEMBER",
+                change_json={"operation": "REMOVE_MEMBER", "target_user_id": target_user.id},
+                hash="h" * 44,
+                creator_signature="s" * 88,
+                required_quorum=2,
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                status=PanicRequestStatus.QUORUM_REACHED,
+            )
+            session.add(request)
+            session.commit()
+
+            with self.assertRaises(HTTPException) as unauthorized:
+                finalize_member_removal(
+                    third_user.id,
+                    domain.id,
+                    request.id,
+                    session,
+                )
+            self.assertEqual(unauthorized.exception.status_code, 403)
+
+            response = finalize_member_removal(
+                initiator.id,
+                domain.id,
+                request.id,
+                session,
+            )
+
+            session.refresh(target_membership)
+            ie_record = session.scalar(
+                select(DomainRecord).where(DomainRecord.domain_id == domain.id)
+            )
+            self.assertEqual(response.status, PanicRequestStatus.APPLIED.value)
+            self.assertFalse(target_membership.is_active)
+            self.assertEqual(target_membership.membership_status, MembershipStatus.DECLINED)
+            self.assertIsNone(target_membership.intent_public_key)
+            self.assertIsNone(target_membership.panic_public_key)
+            self.assertEqual(ie_record.value["panic_quorum"], 2)
+
+    def test_removal_target_cannot_attach_a_panic_signature(self) -> None:
+        with Session(self.engine) as session:
+            domain = Domain(name="blocked-vote.test")
+            initiator = User(
+                first_name="Action", last_name="Owner", username="owner",
+                email="owner@blocked.test", password_hash="unused",
+            )
+            target_user = User(
+                first_name="Target", last_name="Member", username="target",
+                email="target@blocked.test", password_hash="unused",
+            )
+            session.add_all([
+                domain,
+                initiator,
+                target_user,
+                UserDomain(user=initiator, domain=domain, panic_public_key="a" * 44),
+                UserDomain(user=target_user, domain=domain, panic_public_key="b" * 44),
+            ])
+            session.flush()
+            request = PanicRequest(
+                request_id="blocked-removal-vote",
+                domain=domain,
+                created_by=initiator,
+                operation="REMOVE_MEMBER",
+                change_json={"operation": "REMOVE_MEMBER", "target_user_id": target_user.id},
+                hash="h" * 44,
+                creator_signature="s" * 88,
+                required_quorum=1,
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                status=PanicRequestStatus.PENDING,
+            )
+            session.add(request)
+            session.commit()
+
+            with self.assertRaises(HTTPException) as blocked:
+                attach_panic_signature(
+                    target_user.id,
+                    domain.id,
+                    request.id,
+                    PanicSignatureCreate(signature="s" * 88),
+                    session,
+                )
+            self.assertEqual(blocked.exception.status_code, 403)

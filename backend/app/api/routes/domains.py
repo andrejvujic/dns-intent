@@ -541,6 +541,17 @@ def enable_dns_intent(
     ensure_intent_not_enabled(domain.id, session)
 
     memberships = accepted_memberships(domain.id, session)
+    max_quorum = len(memberships) - 1
+    if max_quorum < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="At least two active domain members are required to enable DNS Intent.",
+        )
+    if payload.panic_quorum > max_quorum:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Panic quorum must be at most {max_quorum} for {len(memberships)} domain members.",
+        )
     expected_ids = {membership.user_id for membership in memberships}
     supplied_ids = [item.user_id for item in payload.public_keys]
     if (
@@ -798,17 +809,52 @@ def create_panic_change(
             raise HTTPException(status_code=404, detail="User not found.")
         if invitee.email != payload.change.member_email:
             raise HTTPException(status_code=400, detail="The signed email does not match the invited user.")
-        pending_ids = session.scalars(select(PanicRequest.id).where(
-            PanicRequest.domain_id == domain.id,
-            PanicRequest.operation == "ADD_MEMBER",
-            PanicRequest.status.in_((PanicRequestStatus.PENDING, PanicRequestStatus.QUORUM_REACHED)),
-        )).all()
+        pending_ids = session.scalars(
+            select(PanicRequest.id).where(
+                PanicRequest.domain_id == domain.id,
+                PanicRequest.operation == "ADD_MEMBER",
+                PanicRequest.status.in_((PanicRequestStatus.PENDING, PanicRequestStatus.QUORUM_REACHED)),
+            )
+        ).all()
         for pending_id in pending_ids:
             pending = load_panic_request(pending_id, domain.id, session)
-            if (pending.change_json["member_user_id"] == invitee.id
-                    and pending.status in (PanicRequestStatus.PENDING, PanicRequestStatus.QUORUM_REACHED)):
+            if (
+                pending.change_json["member_user_id"] == invitee.id
+                and pending.status in (PanicRequestStatus.PENDING, PanicRequestStatus.QUORUM_REACHED)
+            ):
                 raise HTTPException(status_code=409, detail="This user already has a pending signed invitation.")
         create_invitation(invitee, domain, membership, session, protected=True)
+
+    removal_target = None
+    if payload.change.operation == "REMOVE_MEMBER":
+        if payload.change.target_user_id == user_id:
+            raise HTTPException(status_code=409, detail="You cannot request your own removal from the domain.")
+        removal_target = session.scalar(
+            select(UserDomain).where(
+                UserDomain.user_id == payload.change.target_user_id,
+                UserDomain.domain_id == domain.id,
+                UserDomain.is_active.is_(True),
+                UserDomain.membership_status == MembershipStatus.ACCEPTED,
+            )
+        )
+        if removal_target is None:
+            raise HTTPException(status_code=404, detail="The member to remove was not found in this domain.")
+        pending_removals = session.scalars(
+            select(PanicRequest).where(
+                PanicRequest.domain_id == domain.id,
+                PanicRequest.operation == "REMOVE_MEMBER",
+                PanicRequest.status.in_((PanicRequestStatus.PENDING, PanicRequestStatus.QUORUM_REACHED)),
+            )
+        ).all()
+        now = datetime.now(timezone.utc)
+        for pending_removal in pending_removals:
+            pending_expires_at = pending_removal.expires_at
+            if pending_expires_at.tzinfo is None:
+                pending_expires_at = pending_expires_at.replace(tzinfo=timezone.utc)
+            if pending_expires_at <= now and pending_removal.status == PanicRequestStatus.PENDING:
+                pending_removal.status = PanicRequestStatus.EXPIRED
+            elif (pending_removal.change_json or {}).get("target_user_id") == removal_target.user_id:
+                raise HTTPException(status_code=409, detail="This member already has an active removal request.")
 
     if payload.change.operation == "CANCEL_COMMIT":
         target_commit = session.scalar(
@@ -871,6 +917,9 @@ def create_panic_change(
             rotation_request.status = PanicRequestStatus.EXPIRED
 
     quorum = int((ie_record.value or {}).get("panic_quorum", 1))
+    if removal_target is not None:
+        eligible_voter_count = len(accepted_memberships(domain.id, session)) - 1
+        quorum = min(quorum, eligible_voter_count)
     request = PanicRequest(
         request_id=payload.change.request_id,
         domain_id=domain.id,
@@ -898,7 +947,7 @@ def create_panic_change(
     if quorum == 1:
         request.status = PanicRequestStatus.QUORUM_REACHED
         set_invitation_status(request, MembershipStatus.QUORUM_REACHED, session)
-        if request.operation not in ("ROTATE_KEYS", "ADD_MEMBER"):
+        if request.operation not in ("ROTATE_KEYS", "ADD_MEMBER", "REMOVE_MEMBER"):
             apply_panic_change(
                 domain,
                 change_data,
@@ -966,6 +1015,8 @@ def attach_panic_signature(
     get_authorized_domain(user_id, domain_id, session)
     membership = get_active_membership(user_id, domain_id, session)
     request = load_panic_request(panic_id, domain_id, session)
+    if request.operation == "REMOVE_MEMBER" and request.change_json.get("target_user_id") == user_id:
+        raise HTTPException(status_code=403, detail="The member targeted for removal cannot sign or vote on this request.")
     if request.status != PanicRequestStatus.PENDING:
         raise HTTPException(status_code=409, detail="This panic change is no longer pending.")
     if membership.panic_public_key is None:
@@ -1007,6 +1058,8 @@ def vote_on_panic_change(
     domain = get_authorized_domain(user_id, domain_id, session)
     membership = get_active_membership(user_id, domain_id, session)
     request = load_panic_request(panic_id, domain_id, session)
+    if request.operation == "REMOVE_MEMBER" and request.change_json.get("target_user_id") == user_id:
+        raise HTTPException(status_code=403, detail="The member targeted for removal cannot vote on this request.")
     if request.status != PanicRequestStatus.PENDING:
         raise HTTPException(status_code=409, detail="This panic change is no longer pending.")
     vote = session.scalar(
@@ -1036,7 +1089,7 @@ def vote_on_panic_change(
     if for_count >= request.required_quorum:
         request.status = PanicRequestStatus.QUORUM_REACHED
         set_invitation_status(request, MembershipStatus.QUORUM_REACHED, session)
-        if request.operation not in ("ROTATE_KEYS", "ADD_MEMBER"):
+        if request.operation not in ("ROTATE_KEYS", "ADD_MEMBER", "REMOVE_MEMBER"):
             apply_panic_change(
                 domain,
                 request.change_json,
@@ -1122,6 +1175,44 @@ def finalize_key_rotation(
         session,
         preserve_panic_request_id=request.id,
     )
+    request.status = PanicRequestStatus.APPLIED
+    request.applied_at = datetime.now(timezone.utc)
+    session.commit()
+    return panic_response(load_panic_request(request.id, domain_id, session), user_id)
+
+
+@router.post(
+    "/{domain_id}/panic-changes/{panic_id}/remove-member",
+    response_model=PanicResponse,
+)
+def finalize_member_removal(
+    user_id: int,
+    domain_id: int,
+    panic_id: int,
+    session: DbSession,
+) -> PanicResponse:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    request = load_panic_request(panic_id, domain_id, session)
+    if request.operation != "REMOVE_MEMBER":
+        raise HTTPException(status_code=409, detail="This panic request is not a member removal.")
+    if request.status != PanicRequestStatus.QUORUM_REACHED:
+        raise HTTPException(status_code=409, detail="The member can be removed only after quorum approval.")
+    if request.created_by_user_id != user_id:
+        raise HTTPException(status_code=403, detail="Only the user who initiated this action can remove the member.")
+
+    target_user_id = request.change_json.get("target_user_id")
+    target = session.scalar(
+        select(UserDomain).where(
+            UserDomain.user_id == target_user_id,
+            UserDomain.domain_id == domain.id,
+            UserDomain.is_active.is_(True),
+            UserDomain.membership_status == MembershipStatus.ACCEPTED,
+        )
+    )
+    if target is None:
+        raise HTTPException(status_code=409, detail="The member has already been removed from this domain.")
+
+    remove_domain_member(domain, target, session)
     request.status = PanicRequestStatus.APPLIED
     request.applied_at = datetime.now(timezone.utc)
     session.commit()
@@ -1321,7 +1412,7 @@ def apply_panic_change(
             membership.panic_public_key = None
         return None
 
-    if operation in ("ROTATE_KEYS", "ADD_MEMBER"):
+    if operation in ("ROTATE_KEYS", "ADD_MEMBER", "REMOVE_MEMBER"):
         raise HTTPException(
             status_code=409,
             detail="This operation must be finalized by its initiator after quorum approval.",
@@ -1381,6 +1472,34 @@ def apply_panic_change(
         return record.id
     session.delete(record)
     return None
+
+
+def remove_domain_member(
+    domain: Domain,
+    membership: UserDomain,
+    session: Session,
+) -> None:
+    """Revoke domain access and resize the configured panic quorum."""
+    if membership.domain_id != domain.id or not membership.is_active:
+        raise HTTPException(status_code=409, detail="The member is not active in this domain.")
+
+    for commit in list(membership.commits):
+        session.delete(commit)
+    membership.intent_public_key = None
+    membership.panic_public_key = None
+    membership.membership_status = MembershipStatus.DECLINED
+    membership.is_active = False
+    session.flush()
+
+    remaining_count = len(accepted_memberships(domain.id, session))
+    if remaining_count < 1:
+        raise HTTPException(status_code=409, detail="A domain must keep at least one active member.")
+    ie_record = find_ie_record(domain.id, session)
+    if ie_record is not None:
+        ie_record.value = {
+            **(ie_record.value or {}),
+            "panic_quorum": required_quorum(remaining_count),
+        }
 
 
 def apply_key_rotation(

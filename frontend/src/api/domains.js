@@ -143,6 +143,12 @@ export function finalizeKeyRotation(userId, domainId, panicId, publicKeys) {
   });
 }
 
+export function finalizeMemberRemoval(userId, domainId, panicId) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/panic-changes/${panicId}/remove-member`, {
+    method: 'POST',
+  });
+}
+
 export function createDomainRecord(userId, domainId, payload) {
   return requestJson(`/api/users/${userId}/domains/${domainId}/records`, {
     method: 'POST',

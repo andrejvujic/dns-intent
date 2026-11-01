@@ -18,6 +18,7 @@ from app.api.routes.domains import (
     create_panic_change,
     create_domain_record,
     delete_domain_record,
+    enable_dns_intent,
     get_domain_team,
     finalize_member_addition,
     load_panic_request,
@@ -46,9 +47,11 @@ from app.schemas import (
     DomainRecordCreate,
     DomainRecordUpdate,
     InvitationCreate,
+    MemberPublicKeys,
     MembershipVoteCreate,
     RegisterRequest,
 )
+from app.schemas.domain_record import IntentEnforcementCreate
 from app.schemas.panic import PanicChange, PanicCreate, PanicSignatureCreate, PanicVoteCreate
 from scripts.create_panic_signature import create_panic_bundle
 
@@ -167,6 +170,16 @@ class MembershipFlowTests(TestCase):
         data.update(overrides)
         return PanicChange(**data)
 
+    def member_keys(self, user: User) -> MemberPublicKeys:
+        public_key = base64.b64encode(
+            Ed25519PrivateKey.generate().public_key().public_bytes_raw()
+        ).decode()
+        return MemberPublicKeys(
+            user_id=user.id,
+            intent_public_key=public_key,
+            panic_public_key=public_key,
+        )
+
     def protect_domain(self, quorum: int = 3) -> None:
         self.protected = True
         for member in self.members:
@@ -210,6 +223,57 @@ class MembershipFlowTests(TestCase):
         pera = self.register_user()
         self.assertEqual(list_user_domains(pera.id, self.session), [])
         self.assertIsNone(self.status_of(pera))
+
+    def intent_payload(self, quorum: int) -> IntentEnforcementCreate:
+        public_key = base64.b64encode(
+            Ed25519PrivateKey.generate().public_key().public_bytes_raw()
+        ).decode()
+        return IntentEnforcementCreate(
+            panic_quorum=quorum,
+            delay_seconds=30,
+            protected_operations=["NS"],
+            public_keys=[
+                {"user_id": user.id, "intent_public_key": public_key, "panic_public_key": public_key}
+                for user in self.members
+            ],
+        )
+
+    def test_intent_accepts_quorum_one_below_member_count(self) -> None:
+        record = enable_dns_intent(
+            self.members[0].id, self.domain.id, self.intent_payload(4), self.session,
+        )
+        self.assertEqual(record.value["panic_quorum"], 4)
+
+    def test_intent_rejects_quorum_at_or_above_member_count(self) -> None:
+        for quorum in (5, 6, 100):
+            with self.subTest(quorum=quorum), self.assertRaises(HTTPException) as raised:
+                enable_dns_intent(
+                    self.members[0].id, self.domain.id, self.intent_payload(quorum), self.session,
+                )
+            self.assertEqual(raised.exception.status_code, 422)
+            self.assertIn("at most 4", raised.exception.detail)
+
+    def test_intent_quorum_counts_only_active_accepted_members(self) -> None:
+        self.domain.user_memberships[3].membership_status = MembershipStatus.PENDING
+        self.domain.user_memberships[4].is_active = False
+        self.session.commit()
+        with self.assertRaises(HTTPException) as raised:
+            enable_dns_intent(
+                self.members[0].id, self.domain.id, self.intent_payload(3), self.session,
+            )
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("at most 2 for 3", raised.exception.detail)
+
+    def test_intent_requires_at_least_two_members(self) -> None:
+        for membership in self.domain.user_memberships[1:]:
+            membership.is_active = False
+        self.session.commit()
+        with self.assertRaises(HTTPException) as raised:
+            enable_dns_intent(
+                self.members[0].id, self.domain.id, self.intent_payload(1), self.session,
+            )
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("At least two", raised.exception.detail)
 
     def test_new_user_is_listed_as_candidate_until_invited(self) -> None:
         pera = self.register_user()
@@ -315,13 +379,13 @@ class MembershipFlowTests(TestCase):
         pera = self.register_user()
         self.invite(pera)
         with self.assertRaises(HTTPException) as early:
-            finalize_member_addition(self.members[0].id, self.domain.id, self.last_panic.id, self.session)
+            finalize_member_addition(self.members[0].id, self.domain.id, self.last_panic.id, self.member_keys(pera), self.session)
         self.assertEqual(early.exception.status_code, 409)
         team = self.vote(self.members[1], "ACCEPT")
         self.assertEqual(team.requests[0].required_quorum, 2)
         self.assertEqual(team.requests[0].status, "QUORUM_REACHED")
         self.assertNotIn(pera.id, [m.id for m in list_domain_members(self.members[0].id, self.domain.id, self.session)])
-        finalize_member_addition(self.members[0].id, self.domain.id, self.last_panic.id, self.session)
+        finalize_member_addition(self.members[0].id, self.domain.id, self.last_panic.id, self.member_keys(pera), self.session)
         self.assertEqual(self.status_of(pera), MembershipStatus.ACCEPTED)
 
     def test_expired_invitation_can_restart_but_old_signature_cannot_be_replayed(self) -> None:
@@ -349,7 +413,7 @@ class MembershipFlowTests(TestCase):
         self.session.commit()
         self.assertEqual(self.status_of(pera), MembershipStatus.DECLINED)
         with self.assertRaises(HTTPException) as deleted:
-            finalize_member_addition(self.members[0].id, self.domain.id, old_id, self.session)
+            finalize_member_addition(self.members[0].id, self.domain.id, old_id, self.member_keys(pera), self.session)
         self.assertEqual(deleted.exception.status_code, 404)
 
     def test_legacy_unsigned_votes_do_not_count_and_can_restart_signed(self) -> None:
@@ -392,14 +456,14 @@ class MembershipFlowTests(TestCase):
         inviter_team = get_domain_team(self.members[0].id, self.domain.id, self.session)
         self.assertTrue(inviter_team.requests[0].can_finalize)
         with self.assertRaises(HTTPException) as unauthorized:
-            finalize_member_addition(self.members[1].id, self.domain.id, team.requests[0].panic_request_id, self.session)
+            finalize_member_addition(self.members[1].id, self.domain.id, team.requests[0].panic_request_id, self.member_keys(pera), self.session)
         self.assertEqual(unauthorized.exception.status_code, 403)
-        applied = finalize_member_addition(self.members[0].id, self.domain.id, team.requests[0].panic_request_id, self.session)
+        applied = finalize_member_addition(self.members[0].id, self.domain.id, team.requests[0].panic_request_id, self.member_keys(pera), self.session)
         self.assertEqual(applied.status, "APPLIED")
         self.assertEqual(get_domain_team(self.members[0].id, self.domain.id, self.session).requests, [])
         self.assertEqual(self.status_of(pera), MembershipStatus.ACCEPTED)
         with self.assertRaises(HTTPException) as replay:
-            finalize_member_addition(self.members[0].id, self.domain.id, team.requests[0].panic_request_id, self.session)
+            finalize_member_addition(self.members[0].id, self.domain.id, team.requests[0].panic_request_id, self.member_keys(pera), self.session)
         self.assertEqual(replay.exception.status_code, 409)
 
     def test_one_member_quorum_still_requires_inviter_application(self) -> None:
@@ -414,7 +478,7 @@ class MembershipFlowTests(TestCase):
         team = self.invite(pera)
         self.assertEqual(team.requests[0].status, "QUORUM_REACHED")
         self.assertEqual(self.status_of(pera), MembershipStatus.QUORUM_REACHED)
-        finalize_member_addition(self.members[0].id, self.domain.id, team.requests[0].panic_request_id, self.session)
+        finalize_member_addition(self.members[0].id, self.domain.id, team.requests[0].panic_request_id, self.member_keys(pera), self.session)
         self.assertEqual(self.status_of(pera), MembershipStatus.ACCEPTED)
 
     def test_majority_declines_and_user_can_be_proposed_again(self) -> None:

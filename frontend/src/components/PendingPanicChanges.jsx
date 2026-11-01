@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { attachPanicSignature, finalizeKeyRotation, getDomainMembers, getPanicChanges, votePanicChange } from '../api/domains.js';
+import { attachPanicSignature, finalizeKeyRotation, finalizeMemberRemoval, getDomainMembers, getPanicChanges, votePanicChange } from '../api/domains.js';
 import { downloadPrivateKeys, generateDomainKeys, publicKeysPayload } from '../crypto/keys.js';
 
 function downloadJson(change) {
@@ -17,6 +17,7 @@ function changeSummary(change) {
   if (change.operation === 'DISABLE_DNS_INTENT') return 'Disable DNS Intent and clear scheduled changes';
   if (change.operation === 'ROTATE_KEYS') return 'Rotate Intent and panic keys and clear scheduled changes';
   if (change.operation === 'CANCEL_COMMIT') return `Cancel scheduled commit #${change.commit_id}`;
+  if (change.operation === 'REMOVE_MEMBER') return `Remove domain member #${change.target_user_id}`;
   if (change.operation === 'ADD_RECORD') return `Add ${change.record_type} record`;
   return `${change.operation === 'UPDATE_RECORD' ? 'Update' : 'Delete'} DNS record #${change.record_id}`;
 }
@@ -91,6 +92,20 @@ export default function PendingPanicChanges({ userId, domainId, domainName, onNo
     }
   }
 
+  async function removeMember(item) {
+    setBusyId(item.id);
+    try {
+      await finalizeMemberRemoval(userId, domainId, item.id);
+      onNotify('success', 'The member was removed and the domain quorum was recalculated.');
+      await load();
+      await onApplied();
+    } catch (error) {
+      onNotify('error', error.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   if (loading) return <div className="loading-state">Loading panic changes…</div>;
   return (
     <section className="scheduled-commits panic-board">
@@ -103,6 +118,7 @@ export default function PendingPanicChanges({ userId, domainId, domainName, onNo
         <div className="commit-list">
           {items.map((item) => {
             const isTied = item.status === 'PENDING' && item.for_count > 0 && item.for_count === item.against_count;
+            const isRemovalTarget = item.change.operation === 'REMOVE_MEMBER' && item.change.target_user_id === userId;
             return <article className="commit-item" key={item.id}>
             <div className="commit-item-top">
               <span className={`commit-status panic-status status-${item.status.toLowerCase()}`}>PANIC · {item.status}</span>
@@ -126,9 +142,19 @@ export default function PendingPanicChanges({ userId, domainId, domainName, onNo
                 </span>
               </div>
             )}
+            {item.status === 'QUORUM_REACHED' && item.change.operation === 'REMOVE_MEMBER' && (
+              <div className="panic-decision-notice decision-accepted">
+                <strong>Removal approved</strong>
+                <span>
+                  {item.created_by_user_id === userId
+                    ? 'The quorum was met. You initiated this action; remove the member from the domain.'
+                    : `Waiting for ${item.created_by_username}, who initiated this action, to remove the member.`}
+                </span>
+              </div>
+            )}
             {item.status === 'REJECTED' && <div className="panic-decision-notice decision-rejected"><strong>Decision reached: REJECT</strong><span>The rejection quorum was met. No change was applied.</span></div>}
             <details className="panic-json-review"><summary>Review requested JSON</summary><pre>{JSON.stringify(item.change, null, 2)}</pre></details>
-            {item.status === 'PENDING' && (
+            {item.status === 'PENDING' && !isRemovalTarget && (
               <button className="commit-reveal-button panic-download-button" type="button" onClick={() => downloadJson(item.change)}>Download JSON to sign</button>
             )}
             {item.status === 'QUORUM_REACHED' && item.change.operation === 'ROTATE_KEYS' && item.created_by_user_id === userId && (
@@ -136,7 +162,15 @@ export default function PendingPanicChanges({ userId, domainId, domainName, onNo
                 {busyId === item.id ? 'Generating keys…' : 'Generate file and rotate keys'}
               </button>
             )}
-            {item.status === 'PENDING' && !item.user_vote && <div className="reveal-form panic-vote-form">
+            {item.status === 'QUORUM_REACHED' && item.change.operation === 'REMOVE_MEMBER' && item.created_by_user_id === userId && (
+              <button className="primary-button" type="button" disabled={busyId === item.id} onClick={() => removeMember(item)}>
+                {busyId === item.id ? 'Removing member…' : 'Remove member from domain'}
+              </button>
+            )}
+            {item.status === 'PENDING' && isRemovalTarget && (
+              <p className="field-note">You are the member targeted by this request, so you cannot sign or vote on it.</p>
+            )}
+            {item.status === 'PENDING' && !item.user_vote && !isRemovalTarget && <div className="reveal-form panic-vote-form">
               <p className="reveal-step-label">Signature and vote</p>
               <label htmlFor={`panic-signature-${item.id}`}>Panic signature</label>
               <textarea id={`panic-signature-${item.id}`} rows={3} value={signatures[item.id] || ''} onChange={(event) => setSignatures((current) => ({ ...current, [item.id]: event.target.value }))} placeholder="88-character Base64 Ed25519 signature" />

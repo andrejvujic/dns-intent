@@ -20,6 +20,7 @@ export default function MembersPanel({
   dnsIntentEnabled,
   onVote,
   onInvite,
+  onRequestRemoval,
   onRefresh,
 }) {
   if (isLoading && !team) {
@@ -143,6 +144,7 @@ export default function MembersPanel({
               <th>Email</th>
               <th>Status</th>
               {dnsIntentEnabled && <th>Keys</th>}
+              {dnsIntentEnabled && canVote && <th className="actions-heading">Action</th>}
             </tr>
           </thead>
           <tbody>
@@ -161,6 +163,19 @@ export default function MembersPanel({
                     </span>
                   </td>
                   {dnsIntentEnabled && <td>{member.has_intent_keys ? 'Registered' : '—'}</td>}
+                  {dnsIntentEnabled && canVote && (
+                    <td className="record-actions">
+                      {member.membership_status === 'ACCEPTED' && member.user_id !== userId ? (
+                        <button
+                          className="panic-reject-button"
+                          type="button"
+                          onClick={() => onRequestRemoval(member)}
+                        >
+                          Request removal
+                        </button>
+                      ) : '—'}
+                    </td>
+                  )}
                 </tr>
               );
             })}

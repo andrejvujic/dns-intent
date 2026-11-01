@@ -105,10 +105,12 @@ or `REJECT` vote using the same signature.
 
 Reaching the configured `required_quorum` of `ACCEPT` votes applies the change
 immediately, without a commit or hold period. A `REJECT` quorum rejects it, and
-an unresolved request becomes `EXPIRED` after `expires_at`. `ROTATE_KEYS` is the
-one two-stage exception: quorum first sets `QUORUM_REACHED`, after which the
-requester must supply new public keys for every active member before the request
-becomes `APPLIED`.
+an unresolved request becomes `EXPIRED` after `expires_at`. `ROTATE_KEYS` and
+`REMOVE_MEMBER` are two-stage exceptions: quorum first sets `QUORUM_REACHED`.
+The requester then either supplies new public keys for every active member or
+confirms removal of the targeted member. A removal target cannot sign or vote
+on that request. Removing the member also recalculates the configured panic
+quorum as a strict majority of the remaining active members.
 
 ![Panic change and quorum flow](presentation/images/panic-flow-v3.png)
 
@@ -165,8 +167,9 @@ member's panic private key.
 The requester uploads both files. Other members review and download the exact
 JSON from **Pending Panic Changes**, sign it, validate their signature, and vote
 ACCEPT or REJECT. Either counter reaching the configured panic quorum closes the
-request; accepted changes execute immediately. Panic changes can also cancel an
-active scheduled commit.
+request; accepted changes execute immediately, except for the two-stage key
+rotation and member-removal operations. Panic changes can also cancel an active
+scheduled commit.
 
 ## Structure
 

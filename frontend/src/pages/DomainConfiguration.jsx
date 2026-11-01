@@ -283,6 +283,21 @@ export default function DomainConfiguration({
     onNotify('success', 'The key-rotation panic JSON was downloaded. New keys will be generated only after the quorum approves it.');
   }
 
+  function handleRequestMemberRemoval(member) {
+    const change = {
+      type: 'PANIC_CHANGE',
+      request_id: crypto.randomUUID(),
+      domain: domain.name,
+      operation: 'REMOVE_MEMBER',
+      target_user_id: member.user_id,
+      expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+    };
+    downloadPanicChange(domain.name, change.operation, change);
+    setPreparedPanicChange(change);
+    setActiveView('commits');
+    onNotify('success', `The removal request for ${personName(member)} was downloaded. Sign it with your panic key, then submit it below.`);
+  }
+
   if (isLoading || !domain) {
     return <div className="page-container"><div className="loading-state">Loading DNS configuration…</div></div>;
   }
@@ -427,6 +442,7 @@ export default function DomainConfiguration({
             dnsIntentEnabled={dnsIntentEnabled}
             onVote={handleMembershipVote}
             onInvite={handleInvite}
+            onRequestRemoval={handleRequestMemberRemoval}
             onRefresh={loadTeam}
           />
         </section>
@@ -434,7 +450,13 @@ export default function DomainConfiguration({
 
       {dnsIntentEnabled && !isPendingMember && activeView === 'panic' && (
         <section id="panic-workflow-view" role="tabpanel" aria-label="Pending Panic Changes">
-          <PendingPanicChanges userId={userId} domainId={domain.id} domainName={domain.name} onNotify={onNotify} onApplied={onReloadDomain} />
+          <PendingPanicChanges
+            userId={userId}
+            domainId={domain.id}
+            domainName={domain.name}
+            onNotify={onNotify}
+            onApplied={() => Promise.all([onReloadDomain(), loadTeam()])}
+          />
         </section>
       )}
 

@@ -13,6 +13,7 @@ PANIC_OPERATIONS = {
     "CANCEL_COMMIT",
     "DISABLE_DNS_INTENT",
     "ROTATE_KEYS",
+    "REMOVE_MEMBER",
 }
 
 
@@ -26,6 +27,7 @@ class PanicChange(BaseModel):
     record_type: str | None = Field(default=None, min_length=1, max_length=30)
     record_id: int | None = Field(default=None, gt=0)
     commit_id: int | None = Field(default=None, gt=0)
+    target_user_id: int | None = Field(default=None, gt=0)
     value: dict[str, Any] | None = None
     expires_at: datetime
 
@@ -52,21 +54,27 @@ class PanicChange(BaseModel):
         if self.expires_at.tzinfo is None:
             raise ValueError("expires_at must include a timezone")
         if self.operation == "DISABLE_DNS_INTENT":
-            if any((self.record_type, self.record_id, self.commit_id, self.value)):
+            if any((self.record_type, self.record_id, self.commit_id, self.target_user_id, self.value)):
                 raise ValueError("DISABLE_DNS_INTENT does not accept record or commit fields")
             return self
         if self.operation == "ROTATE_KEYS":
-            if any((self.record_type, self.record_id, self.commit_id, self.value)):
+            if any((self.record_type, self.record_id, self.commit_id, self.target_user_id, self.value)):
                 raise ValueError("ROTATE_KEYS does not accept record or commit fields")
+            return self
+        if self.operation == "REMOVE_MEMBER":
+            if self.target_user_id is None:
+                raise ValueError("REMOVE_MEMBER requires target_user_id")
+            if any((self.record_type, self.record_id, self.commit_id, self.value)):
+                raise ValueError("REMOVE_MEMBER only accepts target_user_id")
             return self
         if self.operation == "CANCEL_COMMIT":
             if self.commit_id is None:
                 raise ValueError("CANCEL_COMMIT requires commit_id")
-            if any((self.record_type, self.record_id, self.value)):
+            if any((self.record_type, self.record_id, self.target_user_id, self.value)):
                 raise ValueError("CANCEL_COMMIT only accepts commit_id")
             return self
-        if self.commit_id is not None:
-            raise ValueError("commit_id is only valid for CANCEL_COMMIT")
+        if self.commit_id is not None or self.target_user_id is not None:
+            raise ValueError("commit_id and target_user_id are not valid for record changes")
         if self.operation == "ADD_RECORD":
             if self.record_type is None or self.value is None or self.record_id is not None:
                 raise ValueError("ADD_RECORD requires record_type and value")

@@ -26,16 +26,20 @@ def create_panic_bundle(change: PanicChange, private_key: Any) -> dict[str, Any]
     digest = hashlib.sha256(canonical_json(data)).digest()
     signature = private_key.sign(digest)
     signature_b64 = base64.b64encode(signature).decode("ascii")
-    return {
+    bundle = {
         "format": "dns-intent-panic-signature-v1",
         "domain": change.domain,
         "request_id": change.request_id,
+        "operation": change.operation,
         "panic_request": {
             "hash": base64.b64encode(digest).decode("ascii"),
             "signature": signature_b64,
         },
         "signature": signature_b64,
     }
+    if change.operation == "REMOVE_MEMBER":
+        bundle["target_user_id"] = change.target_user_id
+    return bundle
 
 
 def main() -> None:

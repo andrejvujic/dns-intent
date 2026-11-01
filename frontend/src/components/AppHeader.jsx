@@ -1,5 +1,6 @@
+import { personInitials, personName } from '../utils.js';
 export default function AppHeader({ user, onHome, onLogout }) {
-  const initials = `${user.first_name[0] || ''}${user.last_name[0] || ''}`;
+  const initials = personInitials(user);
 
   return (
     <header className="app-header">
@@ -11,7 +12,7 @@ export default function AppHeader({ user, onHome, onLogout }) {
       </nav>
       <div className="account-menu">
         <div className="account-copy">
-          <strong>{user.first_name} {user.last_name}</strong>
+          <strong>{personName(user)}</strong>
           <span>{user.email}</span>
         </div>
         <span className="avatar" aria-hidden="true">{initials}</span>

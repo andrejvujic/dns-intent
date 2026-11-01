@@ -16,6 +16,7 @@ from app.models import (
     Domain,
     DomainRecord,
     DomainRecordType,
+    MembershipStatus,
     User,
     UserDomain,
     PanicRequest,
@@ -34,13 +35,18 @@ from app.schemas import (
     DomainRecordResponse,
     DomainRecordUpdate,
     DomainSummary,
+    DomainTeamResponse,
     Intent,
     IntentEnforcementCreate,
+    MembershipRequestResponse,
+    MembershipVoteCreate,
+    OwnPublicKeysCreate,
     PanicCreate,
     PanicResponse,
     PanicSignatureCreate,
     PanicVoteCreate,
     RotationKeysCreate,
+    TeamMemberResponse,
 )
 from app.schemas.domain_record import validate_record_value
 from app.services.canonical import canonical_json, commitment_hash
@@ -54,8 +60,16 @@ from app.services.email import (
     EmailRecipient,
     PanicChangeEmail,
     ScheduledIntentEmail,
+    send_join_request_email,
     send_panic_change_email,
     send_scheduled_intent_email,
+)
+from app.services.membership import (
+    accepted_memberships,
+    create_join_request,
+    join_request_notification,
+    record_membership_vote,
+    required_quorum,
 )
 
 
@@ -63,7 +77,9 @@ router = APIRouter(prefix="/api/users/{user_id}/domains", tags=["domains"])
 DbSession = Annotated[Session, Depends(get_db)]
 
 
-def to_summary(domain: Domain) -> DomainSummary:
+def to_summary(
+    domain: Domain, membership_status: MembershipStatus = MembershipStatus.ACCEPTED
+) -> DomainSummary:
     return DomainSummary(
         id=domain.id,
         name=domain.name,
@@ -71,6 +87,7 @@ def to_summary(domain: Domain) -> DomainSummary:
         registrar=domain.registrar,
         record_count=len(domain.records),
         updated_at=domain.updated_at,
+        membership_status=MembershipStatus(membership_status).value,
     )
 
 
@@ -93,6 +110,7 @@ def get_authorized_domain(user_id: int, domain_id: int, session: Session) -> Dom
             Domain.id == domain_id,
             UserDomain.user_id == user_id,
             UserDomain.is_active.is_(True),
+            UserDomain.membership_status != MembershipStatus.DECLINED,
             User.is_active.is_(True),
         )
     )
@@ -122,7 +140,38 @@ def get_active_membership(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Domain not found or the user has no access to it.",
         )
+    if membership.membership_status != MembershipStatus.ACCEPTED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your membership in this domain is pending approval by the domain quorum.",
+        )
     return membership
+
+
+def find_membership(user_id: int, domain_id: int, session: Session) -> UserDomain | None:
+    return session.scalar(
+        select(UserDomain).where(
+            UserDomain.user_id == user_id,
+            UserDomain.domain_id == domain_id,
+        )
+    )
+
+
+def ensure_can_edit_records(user_id: int, domain: Domain, session: Session) -> None:
+    """Anyone with access may edit an unprotected domain; a protected one needs approval."""
+    membership = find_membership(user_id, domain.id, session)
+    if (
+        membership is not None
+        and membership.membership_status != MembershipStatus.ACCEPTED
+        and find_ie_record(domain.id, session) is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This domain is protected by DNS Intent. You can change it only after "
+                "a majority of its members accepts your membership."
+            ),
+        )
 
 
 def commit_response(
@@ -274,13 +323,7 @@ def validated_rotation_keys(
     public_keys: list,
     session: Session,
 ) -> dict[int, tuple[str, str]]:
-    memberships = session.scalars(
-        select(UserDomain).join(User).where(
-            UserDomain.domain_id == domain_id,
-            UserDomain.is_active.is_(True),
-            User.is_active.is_(True),
-        )
-    ).all()
+    memberships = accepted_memberships(domain_id, session)
     expected_ids = {membership.user_id for membership in memberships}
     normalized: dict[int, tuple[str, str]] = {}
     for item in public_keys:
@@ -332,15 +375,19 @@ def delete_domain_change_requests(
 
 @router.get("", response_model=list[DomainSummary])
 def list_user_domains(user_id: int, session: DbSession) -> list[DomainSummary]:
-    domains = session.scalars(
-        select(Domain)
+    rows = session.execute(
+        select(Domain, UserDomain.membership_status)
         .join(UserDomain)
-        .where(UserDomain.user_id == user_id, UserDomain.is_active.is_(True))
+        .where(
+            UserDomain.user_id == user_id,
+            UserDomain.is_active.is_(True),
+            UserDomain.membership_status != MembershipStatus.DECLINED,
+        )
         .options(selectinload(Domain.records))
         .order_by(Domain.name)
     ).all()
 
-    return [to_summary(domain) for domain in domains]
+    return [to_summary(domain, membership_status) for domain, membership_status in rows]
 
 
 @router.get("/{domain_id}", response_model=DomainDetailResponse)
@@ -354,6 +401,7 @@ def get_user_domain(
             Domain.id == domain_id,
             UserDomain.user_id == user_id,
             UserDomain.is_active.is_(True),
+            UserDomain.membership_status != MembershipStatus.DECLINED,
         )
         .options(
             selectinload(Domain.records).joinedload(DomainRecord.record_type)
@@ -366,9 +414,11 @@ def get_user_domain(
             detail="Domain not found.",
         )
 
-    summary = to_summary(domain)
+    membership = find_membership(user_id, domain.id, session)
+    summary = to_summary(domain, membership.membership_status)
     return DomainDetailResponse(
         **summary.model_dump(),
+        has_intent_keys=membership.intent_public_key is not None,
         records=[
             to_record_response(record)
             for record in sorted(
@@ -390,6 +440,7 @@ def list_domain_members(
         .where(
             UserDomain.domain_id == domain_id,
             UserDomain.is_active.is_(True),
+            UserDomain.membership_status == MembershipStatus.ACCEPTED,
             User.is_active.is_(True),
         )
         .order_by(User.first_name, User.last_name)
@@ -410,6 +461,7 @@ def create_domain_record(
     session: DbSession,
 ) -> DomainRecordResponse:
     domain = get_authorized_domain(user_id, domain_id, session)
+    ensure_can_edit_records(user_id, domain, session)
 
     if payload.type == "IE":
         raise HTTPException(
@@ -450,14 +502,10 @@ def enable_dns_intent(
     session: DbSession,
 ) -> DomainRecordResponse:
     domain = get_authorized_domain(user_id, domain_id, session)
+    get_active_membership(user_id, domain_id, session)
     ensure_intent_not_enabled(domain.id, session)
 
-    memberships = session.scalars(
-        select(UserDomain).where(
-            UserDomain.domain_id == domain.id,
-            UserDomain.is_active.is_(True),
-        )
-    ).all()
+    memberships = accepted_memberships(domain.id, session)
     expected_ids = {membership.user_id for membership in memberships}
     supplied_ids = [item.user_id for item in payload.public_keys]
     if (
@@ -581,12 +629,12 @@ def schedule_commit(
     background_tasks.add_task(
         send_scheduled_intent_email,
         [
-            EmailRecipient(email=recipient.email, first_name=recipient.first_name)
+            EmailRecipient(email=recipient.email, first_name=recipient.display_name)
             for recipient in recipients
         ],
         ScheduledIntentEmail(
             domain_name=domain.name,
-            scheduled_by=f"{user.first_name} {user.last_name}",
+            scheduled_by=user.display_name,
             commit_hash=commit.hash,
             received_at=commit.received_at,
             matures_at=commit.matures_at,
@@ -811,12 +859,12 @@ def create_panic_change(
     background_tasks.add_task(
         send_panic_change_email,
         [
-            EmailRecipient(email=recipient.email, first_name=recipient.first_name)
+            EmailRecipient(email=recipient.email, first_name=recipient.display_name)
             for recipient in recipients
         ],
         PanicChangeEmail(
             domain_name=domain.name,
-            requested_by=f"{creator.first_name} {creator.last_name}",
+            requested_by=creator.display_name,
             request_id=request.request_id,
             operation=request.operation,
             required_quorum=request.required_quorum,
@@ -1268,6 +1316,7 @@ def update_domain_record(
     session: DbSession,
 ) -> DomainRecordResponse:
     domain = get_authorized_domain(user_id, domain_id, session)
+    ensure_can_edit_records(user_id, domain, session)
 
     record = session.scalar(
         select(DomainRecord)
@@ -1307,6 +1356,7 @@ def delete_domain_record(
     session: DbSession,
 ) -> Response:
     domain = get_authorized_domain(user_id, domain_id, session)
+    ensure_can_edit_records(user_id, domain, session)
 
     record = session.scalar(
         select(DomainRecord)
@@ -1329,3 +1379,153 @@ def delete_domain_record(
     session.delete(record)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def build_team_response(domain: Domain, user_id: int, session: Session) -> DomainTeamResponse:
+    memberships = session.scalars(
+        select(UserDomain)
+        .join(User, User.id == UserDomain.user_id)
+        .where(
+            UserDomain.domain_id == domain.id,
+            UserDomain.is_active.is_(True),
+            User.is_active.is_(True),
+        )
+        .options(
+            selectinload(UserDomain.user),
+            selectinload(UserDomain.membership_votes),
+        )
+        .order_by(User.first_name, User.last_name)
+    ).all()
+    accepted = [m for m in memberships if m.membership_status == MembershipStatus.ACCEPTED]
+    accepted_ids = {m.id for m in accepted}
+    quorum = required_quorum(len(accepted))
+    me = next((m for m in memberships if m.user_id == user_id), None)
+
+    requests = []
+    for membership in memberships:
+        if membership.membership_status != MembershipStatus.PENDING:
+            continue
+        votes = [v for v in membership.membership_votes if v.voter_user_domain_id in accepted_ids]
+        my_vote = next(
+            (v.decision for v in votes if me is not None and v.voter_user_domain_id == me.id),
+            None,
+        )
+        requests.append(
+            MembershipRequestResponse(
+                membership_id=membership.id,
+                user_id=membership.user_id,
+                first_name=membership.user.first_name,
+                last_name=membership.user.last_name,
+                email=membership.user.email,
+                status=membership.membership_status.value,
+                for_count=sum(v.decision == "ACCEPT" for v in votes),
+                against_count=sum(v.decision == "REJECT" for v in votes),
+                required_quorum=quorum,
+                user_vote=my_vote,
+                requested_at=membership.created_at,
+            )
+        )
+
+    return DomainTeamResponse(
+        my_status=me.membership_status.value if me else MembershipStatus.PENDING.value,
+        accepted_count=len(accepted),
+        required_quorum=quorum,
+        members=[
+            TeamMemberResponse(
+                user_id=m.user_id,
+                first_name=m.user.first_name,
+                last_name=m.user.last_name,
+                email=m.user.email,
+                membership_status=m.membership_status.value,
+                has_intent_keys=m.intent_public_key is not None,
+            )
+            for m in memberships
+            if m.membership_status != MembershipStatus.DECLINED
+        ],
+        requests=requests,
+    )
+
+
+@router.get("/{domain_id}/team", response_model=DomainTeamResponse)
+def get_domain_team(user_id: int, domain_id: int, session: DbSession) -> DomainTeamResponse:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    return build_team_response(domain, user_id, session)
+
+
+@router.post(
+    "/{domain_id}/membership-requests/{membership_id}/vote",
+    response_model=DomainTeamResponse,
+)
+def vote_on_membership_request(
+    user_id: int,
+    domain_id: int,
+    membership_id: int,
+    payload: MembershipVoteCreate,
+    session: DbSession,
+) -> DomainTeamResponse:
+    domain = get_authorized_domain(user_id, domain_id, session)
+    voter = get_active_membership(user_id, domain_id, session)
+    applicant = session.scalar(
+        select(UserDomain)
+        .where(UserDomain.id == membership_id, UserDomain.domain_id == domain.id)
+        .options(selectinload(UserDomain.membership_votes))
+    )
+    if applicant is None:
+        raise HTTPException(status_code=404, detail="Membership request was not found.")
+    if applicant.id == voter.id:
+        raise HTTPException(status_code=403, detail="You cannot vote on your own request.")
+    record_membership_vote(applicant, voter, payload.decision, session)
+    session.commit()
+    return build_team_response(domain, user_id, session)
+
+
+@router.post("/{domain_id}/my-keys", response_model=DomainTeamResponse)
+def register_own_keys(
+    user_id: int,
+    domain_id: int,
+    payload: OwnPublicKeysCreate,
+    session: DbSession,
+) -> DomainTeamResponse:
+    """A member accepted after DNS Intent was enabled adds keys made on their own device."""
+    domain = get_authorized_domain(user_id, domain_id, session)
+    membership = get_active_membership(user_id, domain_id, session)
+    if find_ie_record(domain.id, session) is None:
+        raise HTTPException(status_code=409, detail="DNS Intent is not enabled for this domain.")
+    if membership.intent_public_key is not None or membership.panic_public_key is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Your keys are already registered. Use key rotation to replace them.",
+        )
+    try:
+        validate_public_key(payload.intent_public_key, field="intent_public_key")
+        validate_public_key(payload.panic_public_key, field="panic_public_key")
+    except CryptoInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    membership.intent_public_key = payload.intent_public_key
+    membership.panic_public_key = payload.panic_public_key
+    session.commit()
+    return build_team_response(domain, user_id, session)
+
+
+@router.post(
+    "/{domain_id}/join",
+    response_model=DomainSummary,
+    status_code=status.HTTP_201_CREATED,
+)
+def request_domain_access(
+    user_id: int,
+    domain_id: int,
+    background_tasks: BackgroundTasks,
+    session: DbSession,
+) -> DomainSummary:
+    user = session.get(User, user_id)
+    domain = session.scalar(
+        select(Domain).where(Domain.id == domain_id).options(selectinload(Domain.records))
+    )
+    if user is None or not user.is_active or domain is None:
+        raise HTTPException(status_code=404, detail="Domain not found.")
+    membership = create_join_request(user, domain, session)
+    recipients, notification = join_request_notification(user, domain, session)
+    session.commit()
+    background_tasks.add_task(send_join_request_email, recipients, notification)
+    return to_summary(domain, membership.membership_status)

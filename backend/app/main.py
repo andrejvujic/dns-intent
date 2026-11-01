@@ -5,7 +5,7 @@ from app.api.routes.auth import router as auth_router
 from app.api.routes.domains import router as domains_router
 from app.core.config import settings
 from app.db.base import Base
-from app.db.session import engine, migrate_panic_schema
+from app.db.session import engine, migrate_membership_schema, migrate_panic_schema
 import app.models  # noqa: F401
 
 
@@ -27,6 +27,7 @@ app.include_router(domains_router)
 def prepare_database() -> None:
     Base.metadata.create_all(bind=engine)
     migrate_panic_schema()
+    migrate_membership_schema()
 
 
 @app.get("/api/health")

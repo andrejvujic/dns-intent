@@ -10,6 +10,7 @@ export default function DirectDnsRecordManager({
   onQueryChange,
   protectedTypes = new Set(),
   isMutating,
+  readOnly = false,
   onCreate,
   onUpdate,
   onDelete,
@@ -54,7 +55,7 @@ export default function DirectDnsRecordManager({
             className="add-record-button"
             type="button"
             onClick={() => setFormState({ mode: 'add' })}
-            disabled={isMutating || availableTypes.length === 0}
+            disabled={readOnly || isMutating || availableTypes.length === 0}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 5v14M5 12h14" />
@@ -68,6 +69,7 @@ export default function DirectDnsRecordManager({
         records={records}
         protectedTypes={protectedTypes}
         isBusy={isMutating}
+        readOnly={readOnly}
         onEdit={(record) => setFormState({ mode: 'edit', record })}
         onDelete={setRecordToDelete}
       />

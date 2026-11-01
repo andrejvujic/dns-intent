@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 
-import { loginUser } from './api/auth.js';
-import { getUserDomain, getUserDomains } from './api/domains.js';
+import { getPublicDomains, loginUser } from './api/auth.js';
+import { getUserDomain, getUserDomains, requestDomainAccess } from './api/domains.js';
 import AppHeader from './components/AppHeader.jsx';
+import RegisterForm from './components/RegisterForm.jsx';
 import DomainConfiguration from './pages/DomainConfiguration.jsx';
 import DomainsHome from './pages/DomainsHome.jsx';
 import './styles.css';
@@ -27,6 +28,8 @@ function App() {
   const [isLoadingDomains, setIsLoadingDomains] = useState(false);
   const [selectedDomain, setSelectedDomain] = useState(null);
   const [isLoadingDomain, setIsLoadingDomain] = useState(false);
+  const [authMode, setAuthMode] = useState('login');
+  const [allDomains, setAllDomains] = useState([]);
 
   useEffect(() => {
     if (!notification) {
@@ -46,9 +49,11 @@ function App() {
     let ignoreResult = false;
     setIsLoadingDomains(true);
 
-    getUserDomains(user.id)
-      .then((userDomains) => {
-        if (!ignoreResult) setDomains(userDomains);
+    Promise.all([getUserDomains(user.id), getPublicDomains()])
+      .then(([userDomains, publicDomains]) => {
+        if (ignoreResult) return;
+        setDomains(userDomains);
+        setAllDomains(publicDomains);
       })
       .catch((loadError) => {
         if (!ignoreResult) notify('error', loadError.message);
@@ -75,6 +80,23 @@ function App() {
       notify('error', loginError.message);
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  function handleRegistered(data) {
+    localStorage.setItem('dnsintent-user', JSON.stringify(data.user));
+    setUser(data.user);
+    setAuthMode('login');
+    notify('success', data.message);
+  }
+
+  async function handleRequestAccess(domainId) {
+    try {
+      const summary = await requestDomainAccess(user.id, domainId);
+      setDomains((current) => [...current, summary].sort((a, b) => a.name.localeCompare(b.name)));
+      notify('success', `Access to ${summary.name} was requested. Its members were notified by email.`);
+    } catch (requestError) {
+      notify('error', requestError.message);
     }
   }
 
@@ -134,6 +156,7 @@ function App() {
           />
           {selectedDomain || isLoadingDomain ? (
             <DomainConfiguration
+              user={user}
               userId={user.id}
               domain={selectedDomain}
               isLoading={isLoadingDomain}
@@ -144,8 +167,10 @@ function App() {
           ) : (
             <DomainsHome
               domains={domains}
+              joinableDomains={allDomains.filter((item) => !domains.some((domain) => domain.id === item.id))}
               isLoading={isLoadingDomains}
               onSelectDomain={handleSelectDomain}
+              onRequestAccess={handleRequestAccess}
             />
           )}
         </>
@@ -157,6 +182,13 @@ function App() {
           </section>
 
           <section className="auth-panel">
+          {authMode === 'register' ? (
+            <RegisterForm
+              onRegistered={handleRegistered}
+              onShowLogin={() => setAuthMode('login')}
+              onNotify={notify}
+            />
+          ) : (
           <form className="auth-card" onSubmit={handleSubmit}>
             <h2>Welcome back</h2>
             <p className="form-intro">Sign in to manage protected domains.</p>
@@ -207,7 +239,12 @@ function App() {
               {isSubmitting ? 'Signing in…' : 'Sign in'}
             </button>
 
+            <p className="auth-switch">
+              Don't have an account?{' '}
+              <button className="link-button" type="button" onClick={() => setAuthMode('register')}>Create one</button>
+            </p>
           </form>
+          )}
           </section>
         </>
       )}

@@ -37,6 +37,23 @@ def migrate_panic_schema() -> None:
             connection.execute(text("ALTER TABLE panic_signatures ADD COLUMN decision VARCHAR(6)"))
 
 
+def migrate_membership_schema() -> None:
+    """Small POC migration for databases created before self-registration."""
+    if not settings.database_url.startswith("sqlite"):
+        return
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    if "users" not in tables or "user_domains" not in tables:
+        return
+    membership_columns = {item["name"] for item in inspector.get_columns("user_domains")}
+    with engine.begin() as connection:
+        if "membership_status" not in membership_columns:
+            connection.execute(text(
+                "ALTER TABLE user_domains ADD COLUMN membership_status VARCHAR(8) "
+                "NOT NULL DEFAULT 'ACCEPTED'"
+            ))
+
+
 def get_db() -> Generator[Session, None, None]:
     session = SessionLocal()
     try:

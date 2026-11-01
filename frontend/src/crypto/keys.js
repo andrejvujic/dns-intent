@@ -1,3 +1,5 @@
+import { personName } from '../utils.js';
+
 function bytesToBase64(bytes) {
   let binary = '';
   for (const byte of new Uint8Array(bytes)) binary += String.fromCharCode(byte);
@@ -24,7 +26,7 @@ export async function generateDomainKeys(domain, members) {
       user_id: member.id,
       username: member.username,
       email: member.email,
-      name: `${member.first_name} ${member.last_name}`,
+      name: personName(member),
       intent,
       panic,
     });
@@ -36,6 +38,12 @@ export async function generateDomainKeys(domain, members) {
     warning: 'PRIVATE KEY MATERIAL — store securely and never upload this file.',
     users,
   };
+}
+
+// For one member accepted after protection was enabled: keys are made on
+// that member's own device and only the public halves leave the browser.
+export function generateMemberKeys(domain, user) {
+  return generateDomainKeys(domain, [user]);
 }
 
 export function publicKeysPayload(keyFile) {

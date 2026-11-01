@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { personName } from '../utils.js';
 import { RECORD_TYPES } from './DnsRecordForm.jsx';
 
 const DEFAULT_PROTECTED_OPERATIONS = ['NS', 'DS', 'DNSKEY'];
 
 function memberName(member) {
-  return `${member.first_name} ${member.last_name}`;
+  return personName(member);
 }
 
 export default function IntentEnableForm({

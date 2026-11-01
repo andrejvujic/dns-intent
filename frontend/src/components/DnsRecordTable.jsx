@@ -71,7 +71,7 @@ export function recordContent(record) {
   }
 }
 
-export default function DnsRecordTable({ records, protectedTypes = new Set(), isBusy, onEdit, onDelete }) {
+export default function DnsRecordTable({ records, protectedTypes = new Set(), isBusy, readOnly = false, onEdit, onDelete }) {
   return (
     <div className="table-scroll">
       <table className="records-table">
@@ -113,6 +113,8 @@ export default function DnsRecordTable({ records, protectedTypes = new Set(), is
                 <td className="record-actions">
                   {isProtected ? (
                     <span className="locked-label">Locked</span>
+                  ) : readOnly ? (
+                    <span className="locked-label">View only</span>
                   ) : (
                     <>
                       <button type="button" onClick={() => onEdit(record)} disabled={isBusy}>

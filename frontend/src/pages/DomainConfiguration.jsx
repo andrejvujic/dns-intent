@@ -1,20 +1,26 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   createDomainRecord,
   deleteDomainRecord,
   enableDnsIntent,
   getDomainMembers,
+  getDomainTeam,
+  registerOwnKeys,
   updateDomainRecord,
+  voteMembershipRequest,
 } from '../api/domains.js';
 import DirectDnsRecordManager from '../components/DirectDnsRecordManager.jsx';
 import DnsIntentProtectedManager from '../components/DnsIntentProtectedManager.jsx';
 import IntentEnableForm from '../components/IntentEnableForm.jsx';
+import MembersPanel from '../components/MembersPanel.jsx';
+import { personName } from '../utils.js';
 import PendingPanicChanges from '../components/PendingPanicChanges.jsx';
 import { recordContent, recordName } from '../components/DnsRecordTable.jsx';
 import {
   downloadPrivateKeys,
   generateDomainKeys,
+  generateMemberKeys,
   publicKeysPayload,
 } from '../crypto/keys.js';
 
@@ -31,6 +37,7 @@ function downloadPanicChange(domainName, operation, change) {
 }
 
 export default function DomainConfiguration({
+  user,
   userId,
   domain,
   isLoading,
@@ -46,8 +53,36 @@ export default function DomainConfiguration({
   const [isSubmittingIntent, setIsSubmittingIntent] = useState(false);
   const [activeView, setActiveView] = useState('records');
   const [preparedPanicChange, setPreparedPanicChange] = useState(null);
+  const [team, setTeam] = useState(null);
+  const [isLoadingTeam, setIsLoadingTeam] = useState(false);
+  const [votingId, setVotingId] = useState(null);
+  const [isRegisteringKeys, setIsRegisteringKeys] = useState(false);
   const ieRecord = domain?.records.find((record) => record.type === 'IE');
   const dnsIntentEnabled = Boolean(ieRecord);
+  const isPendingMember = domain?.membership_status === 'PENDING';
+  // Pending members may edit an unprotected domain; a protected one needs approval first.
+  const isReadOnly = isPendingMember && dnsIntentEnabled;
+  const needsOwnKeys = dnsIntentEnabled && !isPendingMember && domain && !domain.has_intent_keys;
+  const pendingRequestCount = team?.requests.length ?? 0;
+  const domainId = domain?.id;
+
+  const loadTeam = useCallback(async () => {
+    if (!domainId) return;
+    setIsLoadingTeam(true);
+    try {
+      setTeam(await getDomainTeam(userId, domainId));
+    } catch (teamError) {
+      onNotify('error', teamError.message);
+    } finally {
+      setIsLoadingTeam(false);
+    }
+    // onNotify is recreated on every App render; reload only when the domain changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, domainId]);
+
+  useEffect(() => {
+    loadTeam();
+  }, [loadTeam]);
   const protectedTypes = useMemo(() => {
     const operations = ieRecord?.value?.protected_operations;
     if (!Array.isArray(operations)) return new Set();
@@ -151,6 +186,47 @@ export default function DomainConfiguration({
     }
   }
 
+  async function handleMembershipVote(request, decision) {
+    setVotingId(request.membership_id);
+    try {
+      const updatedTeam = await voteMembershipRequest(userId, domain.id, request.membership_id, decision);
+      setTeam(updatedTeam);
+      const stillPending = updatedTeam.requests.some((item) => item.membership_id === request.membership_id);
+      const accepted = updatedTeam.members.some(
+        (member) => member.user_id === request.user_id && member.membership_status === 'ACCEPTED',
+      );
+      const name = personName(request);
+      onNotify('success', stillPending
+        ? `Your vote was recorded. ${name} still needs more votes.`
+        : accepted
+          ? `The quorum accepted ${name}. They can now take part in this domain.`
+          : `The quorum declined ${name}'s request.`);
+    } catch (voteError) {
+      onNotify('error', voteError.message);
+    } finally {
+      setVotingId(null);
+    }
+  }
+
+  async function handleRegisterOwnKeys() {
+    setIsRegisteringKeys(true);
+    try {
+      const keyFile = await generateMemberKeys(domain, user);
+      const [ownKeys] = publicKeysPayload(keyFile);
+      await registerOwnKeys(userId, domain.id, {
+        intent_public_key: ownKeys.intent_public_key,
+        panic_public_key: ownKeys.panic_public_key,
+      });
+      downloadPrivateKeys(keyFile, 'my-private-keys');
+      onNotify('success', 'Your keys were created on this device. The private-key file was downloaded; store it securely.');
+      await Promise.all([onReloadDomain(), loadTeam()]);
+    } catch (keysError) {
+      onNotify('error', keysError.message);
+    } finally {
+      setIsRegisteringKeys(false);
+    }
+  }
+
   function handleDisableIntent() {
     const change = {
       type: 'PANIC_CHANGE',
@@ -191,7 +267,7 @@ export default function DomainConfiguration({
       <section className="page-heading domain-heading">
         <h1>{domain.name}</h1>
         <div className="domain-heading-actions">
-          {dnsIntentEnabled && (
+          {dnsIntentEnabled && !isPendingMember && (
             <button className="button-secondary rotate-keys-button" type="button" onClick={handleRotateKeys}>
               Rotate keys
             </button>
@@ -207,6 +283,8 @@ export default function DomainConfiguration({
               role="switch"
               aria-checked={dnsIntentEnabled}
               aria-label={dnsIntentEnabled ? 'Start DNS Intent shutdown' : 'Enable DNS Intent protection'}
+              title={isPendingMember ? 'Only accepted members can change DNS Intent protection' : undefined}
+              disabled={isPendingMember}
               onClick={dnsIntentEnabled ? handleDisableIntent : openIntentForm}
             >
               <span className="switch-knob" />
@@ -215,8 +293,35 @@ export default function DomainConfiguration({
         </div>
       </section>
 
+      {isPendingMember && (
+        <div className="membership-banner is-pending" role="status">
+          <span aria-hidden="true">★</span>
+          <div>
+            <strong>Your membership is pending approval.</strong>
+            <p>
+              {dnsIntentEnabled
+                ? 'This domain is protected by DNS Intent, so you can only view it until a majority of its members accepts you.'
+                : 'You can already edit records because this domain is not protected. Protected actions need a majority of members to accept you.'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {needsOwnKeys && (
+        <div className="membership-banner is-keys" role="status">
+          <span aria-hidden="true">⚿</span>
+          <div>
+            <strong>Create your intent and panic keys.</strong>
+            <p>You were accepted after protection was enabled. Your keys are generated on this device; only the public keys are sent to the server.</p>
+          </div>
+          <button className="button-primary" type="button" disabled={isRegisteringKeys} onClick={handleRegisterOwnKeys}>
+            {isRegisteringKeys ? 'Generating…' : 'Generate my keys'}
+          </button>
+        </div>
+      )}
+
       <nav className="domain-workspace-nav" aria-label="Domain workspace" role="tablist">
-        {dnsIntentEnabled && (
+        {dnsIntentEnabled && !isPendingMember && (
           <button
             className={activeView === 'panic' ? 'is-active' : ''}
             type="button" role="tab" aria-selected={activeView === 'panic'}
@@ -237,7 +342,7 @@ export default function DomainConfiguration({
           <span>DNS records</span>
           <small>View and manage domain data</small>
         </button>
-        {dnsIntentEnabled && (
+        {dnsIntentEnabled && !isPendingMember && (
           <button
             className={activeView === 'commits' ? 'is-active' : ''}
             type="button"
@@ -250,6 +355,20 @@ export default function DomainConfiguration({
             <small>Prepare, schedule, and reveal changes</small>
           </button>
         )}
+        <button
+          className={activeView === 'members' ? 'is-active' : ''}
+          type="button"
+          role="tab"
+          aria-selected={activeView === 'members'}
+          aria-controls="members-view"
+          onClick={() => setActiveView('members')}
+        >
+          <span>
+            Members
+            {pendingRequestCount > 0 && <em className="nav-count">{pendingRequestCount}</em>}
+          </span>
+          <small>Accept or decline new members</small>
+        </button>
       </nav>
 
       {activeView === 'records' && (
@@ -260,6 +379,7 @@ export default function DomainConfiguration({
             onQueryChange={setQuery}
             protectedTypes={protectedTypes}
             isMutating={isMutating}
+            readOnly={isReadOnly}
             onCreate={handleCreate}
             onUpdate={handleUpdate}
             onDelete={handleDelete}
@@ -268,13 +388,27 @@ export default function DomainConfiguration({
         </section>
       )}
 
-      {dnsIntentEnabled && activeView === 'panic' && (
+      {activeView === 'members' && (
+        <section id="members-view" role="tabpanel" aria-label="Members">
+          <MembersPanel
+            team={team}
+            userId={userId}
+            isLoading={isLoadingTeam}
+            busyId={votingId}
+            dnsIntentEnabled={dnsIntentEnabled}
+            onVote={handleMembershipVote}
+            onRefresh={loadTeam}
+          />
+        </section>
+      )}
+
+      {dnsIntentEnabled && !isPendingMember && activeView === 'panic' && (
         <section id="panic-workflow-view" role="tabpanel" aria-label="Pending Panic Changes">
           <PendingPanicChanges userId={userId} domainId={domain.id} domainName={domain.name} onNotify={onNotify} onApplied={onReloadDomain} />
         </section>
       )}
 
-      {dnsIntentEnabled && activeView === 'commits' && (
+      {dnsIntentEnabled && !isPendingMember && activeView === 'commits' && (
         <section id="commit-workflow-view" role="tabpanel" aria-label="Commit workflow">
           <DnsIntentProtectedManager
             ieRecord={ieRecord}

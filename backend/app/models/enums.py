@@ -20,3 +20,9 @@ class PanicRequestStatus(StrEnum):
 class PanicVoteDecision(StrEnum):
     ACCEPT = "ACCEPT"
     REJECT = "REJECT"
+
+
+class MembershipStatus(StrEnum):
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    DECLINED = "DECLINED"

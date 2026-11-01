@@ -42,6 +42,15 @@ class PanicChangeEmail:
     applied_immediately: bool = False
 
 
+@dataclass(frozen=True)
+class JoinRequestEmail:
+    domain_name: str
+    applicant_name: str
+    applicant_email: str
+    required_quorum: int
+    requested_at: datetime
+
+
 def _deliverable_recipients(
     recipients: list[EmailRecipient], notification_name: str
 ) -> list[EmailRecipient]:
@@ -209,6 +218,106 @@ Expires at: {expires_at}
         subtype="html",
     )
     return message
+
+
+def _build_join_request_message(
+    recipient: EmailRecipient, notification: JoinRequestEmail
+) -> EmailMessage:
+    """Notification only: deliberately contains no links or buttons."""
+    domain_name = escape(notification.domain_name)
+    first_name = escape(recipient.first_name)
+    applicant_name = escape(notification.applicant_name)
+    applicant_email = escape(notification.applicant_email)
+    requested_at = _format_utc(notification.requested_at)
+    message = EmailMessage()
+    message["Subject"] = (
+        f"[DNS Intent] A new user wants to join {notification.domain_name}"
+    )
+    message["From"] = formataddr((settings.smtp_from_name, settings.smtp_from_email))
+    message["To"] = recipient.email
+    message.set_content(
+        f"""Hello {recipient.first_name},
+
+A new user registered and asked to join {notification.domain_name}.
+
+Name: {notification.applicant_name}
+Email: {notification.applicant_email}
+Requested at: {requested_at}
+Approvals needed: {notification.required_quorum}
+
+To accept or decline, sign in to DNS Intent yourself and open the domain's Members tab.
+This email contains no links on purpose. If you did not expect this request, decline it.
+"""
+    )
+    message.add_alternative(
+        f"""\
+<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#f2f5f2;color:#17211e;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f2f5f2;padding:32px 16px;">
+      <tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#ffffff;border:1px solid #dce5df;border-radius:18px;overflow:hidden;">
+          <tr><td style="padding:28px 32px;background:#102f28;color:#f7faf8;"><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="width:46px;height:46px;text-align:center;border-radius:13px;background:#9fe3bd;color:#102f28;font-size:16px;font-weight:800;">DI</td><td style="padding-left:14px;font-size:20px;font-weight:750;">DNS Intent</td></tr></table></td></tr>
+          <tr><td style="padding:36px 32px;">
+            <p style="margin:0 0 12px;color:#9a6b12;font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;">Membership request</p>
+            <h1 style="margin:0 0 18px;font-size:28px;line-height:1.2;letter-spacing:-.03em;">A new user wants to join {domain_name}</h1>
+            <p style="margin:0 0 26px;color:#68746f;font-size:16px;line-height:1.65;">Hello {first_name}. The user below registered and asked to manage <strong style="color:#17211e;">{domain_name}</strong>. They have no privileges until a majority of members accepts them.</p>
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;background:#f7faf8;border:1px solid #e3ebe6;border-radius:12px;">
+              <tr><td style="padding:14px 18px;color:#68746f;font-size:13px;border-bottom:1px solid #e3ebe6;">Name</td><td align="right" style="padding:14px 18px;font-size:14px;font-weight:700;border-bottom:1px solid #e3ebe6;">{applicant_name}</td></tr>
+              <tr><td style="padding:14px 18px;color:#68746f;font-size:13px;border-bottom:1px solid #e3ebe6;">Email</td><td align="right" style="padding:14px 18px;font-size:14px;border-bottom:1px solid #e3ebe6;">{applicant_email}</td></tr>
+              <tr><td style="padding:14px 18px;color:#68746f;font-size:13px;border-bottom:1px solid #e3ebe6;">Requested at</td><td align="right" style="padding:14px 18px;font-size:14px;border-bottom:1px solid #e3ebe6;">{requested_at}</td></tr>
+              <tr><td style="padding:14px 18px;color:#68746f;font-size:13px;">Approvals needed</td><td align="right" style="padding:14px 18px;font-size:14px;font-weight:700;">{notification.required_quorum}</td></tr>
+            </table>
+            <p style="margin:24px 0 0;color:#68746f;font-size:14px;line-height:1.6;">To accept or decline, sign in to DNS Intent yourself and open the domain's <strong style="color:#17211e;">Members</strong> tab.</p>
+          </td></tr>
+          <tr><td style="padding:22px 32px;background:#edf3ef;color:#68746f;font-size:12px;line-height:1.6;">This email contains no links on purpose. If you did not expect this request, decline it.</td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>
+""",
+        subtype="html",
+    )
+    return message
+
+
+def send_join_request_email(
+    recipients: list[EmailRecipient], notification: JoinRequestEmail
+) -> None:
+    """Tell accepted members that someone asked to join their domain."""
+    recipients = _deliverable_recipients(recipients, "membership-request")
+    if not recipients:
+        return
+    if not settings.smtp_configured:
+        logger.warning(
+            "Membership request from %s was created, but email was skipped because SMTP is not configured.",
+            notification.applicant_email,
+        )
+        return
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
+            smtp.ehlo()
+            if settings.smtp_starttls:
+                smtp.starttls(context=context)
+                smtp.ehlo()
+            smtp.login(settings.smtp_username, settings.smtp_password)
+            for recipient in recipients:
+                try:
+                    smtp.send_message(_build_join_request_message(recipient, notification))
+                    logger.info(
+                        "Membership-request email was accepted for %s.", recipient.email
+                    )
+                except (OSError, smtplib.SMTPException):
+                    logger.exception(
+                        "Could not send membership-request email to %s.", recipient.email
+                    )
+    except (OSError, smtplib.SMTPException):
+        logger.exception(
+            "Could not connect to SMTP while notifying users about membership request from %s.",
+            notification.applicant_email,
+        )
 
 
 def send_scheduled_intent_email(

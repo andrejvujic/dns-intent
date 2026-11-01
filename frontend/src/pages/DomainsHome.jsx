@@ -7,7 +7,13 @@ function DomainIcon() {
   );
 }
 
-export default function DomainsHome({ domains, isLoading, onSelectDomain }) {
+export default function DomainsHome({
+  domains,
+  joinableDomains = [],
+  isLoading,
+  onSelectDomain,
+  onRequestAccess,
+}) {
   return (
     <div className="page-container">
       <section className="domain-section">
@@ -41,13 +47,40 @@ export default function DomainsHome({ domains, isLoading, onSelectDomain }) {
                   <small>DNS records</small>
                   <strong>{domain.record_count}</strong>
                 </span>
-                <span className="active-badge"><i /> Active</span>
+                {domain.membership_status === 'PENDING' ? (
+                  <span className="pending-badge" title="Waiting for a majority of members to accept you">★ Pending approval</span>
+                ) : (
+                  <span className="active-badge"><i /> Active</span>
+                )}
                 <span className="row-arrow" aria-hidden="true">→</span>
               </button>
             ))}
           </div>
         )}
       </section>
+
+      {!isLoading && joinableDomains.length > 0 && (
+        <section className="domain-section join-section">
+          <div className="section-heading">
+            <h2>Other domains</h2>
+          </div>
+          <p className="join-help">Ask to join a domain. Its members are notified by email and decide by majority vote.</p>
+          <div className="domain-list">
+            {joinableDomains.map((domain) => (
+              <div className="domain-row join-row" key={domain.id}>
+                <span className="domain-icon"><DomainIcon /></span>
+                <span className="domain-primary">
+                  <strong>{domain.name}</strong>
+                  <small>{domain.description || 'Managed domain'}</small>
+                </span>
+                <button className="button-secondary" type="button" onClick={() => onRequestAccess(domain.id)}>
+                  Request access
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

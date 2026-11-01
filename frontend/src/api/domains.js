@@ -55,6 +55,26 @@ export function getDomainMembers(userId, domainId) {
   return requestJson(`/api/users/${userId}/domains/${domainId}/members`);
 }
 
+export function getDomainTeam(userId, domainId) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/team`);
+}
+
+export function voteMembershipRequest(userId, domainId, membershipId, decision) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/membership-requests/${membershipId}/vote`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }),
+  });
+}
+
+export function registerOwnKeys(userId, domainId, publicKeys) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/my-keys`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(publicKeys),
+  });
+}
+
+export function requestDomainAccess(userId, domainId) {
+  return requestJson(`/api/users/${userId}/domains/${domainId}/join`, { method: 'POST' });
+}
+
 export function enableDnsIntent(userId, domainId, payload) {
   return requestJson(`/api/users/${userId}/domains/${domainId}/intent`, {
     method: 'POST',

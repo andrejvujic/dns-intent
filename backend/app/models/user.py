@@ -21,8 +21,9 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    first_name: Mapped[str] = mapped_column(String(100))
-    last_name: Mapped[str] = mapped_column(String(100))
+    # Self-registered users have no name; they are shown by their email instead.
+    first_name: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    last_name: Mapped[str] = mapped_column(String(100), default="", server_default="")
     username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
@@ -33,6 +34,12 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
+
+    @property
+    def display_name(self) -> str:
+        """Name for emails and logs: full name when known, otherwise the email's local part."""
+        full = f"{self.first_name} {self.last_name}".strip()
+        return full or self.email.partition("@")[0]
 
     domain_memberships: Mapped[list[UserDomain]] = relationship(
         back_populates="user", cascade="all, delete-orphan"

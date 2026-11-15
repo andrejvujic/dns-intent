@@ -1,6 +1,8 @@
 # DNS Intent
 
-This project was selected for the final round of the RNIDS DNSSec(urity) hackathon which was held in Belgrade at the Faculty of Computing in Novemeber 2026.
+DNS Intent is a collaborative safety layer for sensitive DNS changes. Routine updates wait through a review period before taking effect, while urgent changes require approval from a configurable quorum of domain members.
+
+The project reached the final round of the RNIDS DNSSec(urity) hackathon, held at the Faculty of Computing in Belgrade in November 2026.
 
 ## Quick start (for reviewers)
 

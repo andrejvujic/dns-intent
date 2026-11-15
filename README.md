@@ -1,5 +1,7 @@
 # DNS Intent
 
+This project was selected for the final round of the RNIDS DNSSec(urity) hackathon which was held in Belgrade at the Faculty of Computing in Novemeber 2026.
+
 ## Quick start (for reviewers)
 
 Requires Git, Python 3.10+ and Node.js 20.19+ or 22.12+.
@@ -92,8 +94,6 @@ the signature with that member's stored `intent_public_key`, rejects a duplicate
 hash, reads `delay_seconds` from the domain's IE policy, and stores the commit
 as `HOLDING` or `READY`. It stores neither the Intent nor the nonce.
 
-![Commit flow](presentation/images/commit-flow-v2.png)
-
 ### 2. Reveal: verify and apply the scheduled change
 
 After `matures_at`, the client sends the original `intent` and the same Base64
@@ -106,8 +106,6 @@ windows, and recomputes the commitment hash. Only a constant-time match against
 the stored hash allows the protected `ADD_RECORD`, `UPDATE_RECORD`, or
 `DELETE_RECORD` operation to run. The commit is then marked `CONSUMED`, so it
 cannot be applied twice.
-
-![Reveal and apply flow](presentation/images/apply-flow-v2.png)
 
 ### 3. Panic change: member signatures and quorum voting
 
@@ -127,8 +125,6 @@ the user identified in the signed request; and member removal requires an
 explicit confirmation. A removal target cannot sign or vote on that request.
 Removing the member also recalculates the configured panic quorum as a strict
 majority of the remaining active members. The request then becomes `APPLIED`.
-
-![Panic change and quorum flow](presentation/images/panic-flow-v3.png)
 
 ## Email notifications
 
